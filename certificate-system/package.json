@@ -1,0 +1,49 @@
+{
+  "name": "certificate-system",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "prisma:deploy": "prisma migrate deploy",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "0.1.53",
+    "@prisma/client": "5.18.0",
+    "archiver": "7.0.1",
+    "bcryptjs": "2.4.3",
+    "clsx": "2.1.1",
+    "jose": "5.6.3",
+    "nanoid": "5.0.7",
+    "next": "^14.2.35",
+    "pdf-lib": "1.17.1",
+    "qrcode": "1.5.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "uuid": "9.0.1",
+    "xlsx": "0.18.5",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/archiver": "6.0.2",
+    "@types/bcryptjs": "2.4.6",
+    "@types/node": "20.14.15",
+    "@types/qrcode": "1.5.5",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "@types/uuid": "9.0.8",
+    "autoprefixer": "10.4.20",
+    "eslint": "8.57.0",
+    "eslint-config-next": "14.2.5",
+    "postcss": "8.4.41",
+    "prisma": "5.18.0",
+    "tailwindcss": "3.4.9",
+    "tsx": "4.16.5",
+    "typescript": "5.5.4"
+  }
+}

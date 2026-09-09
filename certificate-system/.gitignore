@@ -1,0 +1,12 @@
+node_modules
+.next
+.env
+storage/templates/*
+storage/certificates/*
+storage/zips/*
+!storage/templates/.gitkeep
+!storage/certificates/.gitkeep
+!storage/zips/.gitkeep
+public/uploads/*
+!public/uploads/.gitkeep
+*.log

@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AdminRole {
+  ADMIN
+}
+
+enum TemplateFileType {
+  IMAGE
+  PDF
+}
+
+enum CertificateStatus {
+  VALID
+  REVOKED
+}
+
+enum BatchStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         AdminRole @default(ADMIN)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  events    Event[]
+  templates Template[]
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  name        String
+  date        DateTime
+  description String?
+  status      String   @default("ACTIVE") // ACTIVE | ARCHIVED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdById String
+  createdBy   Admin  @relation(fields: [createdById], references: [id])
+
+  certificates Certificate[]
+  batches      GenerationBatch[]
+
+  @@index([name])
+}
+
+// Field position/style configuration stored as JSON on Template.fields, e.g.:
+// [{ "key": "participantName", "label": "Participant Name", "x": 450, "y": 320,
+//    "fontSize": 32, "fontFamily": "serif", "align": "center", "bold": true, "color": "#1B2430" }]
+model Template {
+  id         String           @id @default(cuid())
+  name       String
+  fileUrl    String // path under storage/templates
+  fileType   TemplateFileType
+  widthPx    Int
+  heightPx   Int
+  fields     Json // array of FieldConfig
+  qrEnabled  Boolean          @default(true)
+  qrX        Int?
+  qrY        Int?
+  qrSize     Int?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  createdById String
+  createdBy   Admin  @relation(fields: [createdById], references: [id])
+
+  certificates Certificate[]
+  batches      GenerationBatch[]
+
+  @@index([name])
+}
+
+model Certificate {
+  id                     String            @id @default(cuid())
+  certificateId          String            @unique // e.g. CERT-2026-8F3K92
+  participantName        String
+  participantNameNormalized String // lowercased/trimmed, used for search
+  participantEmail       String?
+  eventId                String
+  event                  Event             @relation(fields: [eventId], references: [id])
+  templateId             String
+  template               Template          @relation(fields: [templateId], references: [id])
+  fileUrl                String // path under storage/certificates
+  issueDate              DateTime
+  status                 CertificateStatus @default(VALID)
+  batchId                String?
+  batch                  GenerationBatch?  @relation(fields: [batchId], references: [id])
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  @@index([participantNameNormalized])
+  @@index([eventId])
+  @@index([batchId])
+}
+
+model GenerationBatch {
+  id           String      @id @default(cuid())
+  eventId      String
+  event        Event       @relation(fields: [eventId], references: [id])
+  templateId   String
+  template     Template    @relation(fields: [templateId], references: [id])
+  totalCount   Int         @default(0)
+  successCount Int         @default(0)
+  failedCount  Int         @default(0)
+  errors       Json? // array of { row, reason }
+  zipUrl       String?
+  status       BatchStatus @default(PROCESSING)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  certificates Certificate[]
+}
