@@ -97,10 +97,19 @@ export async function rasterizePdfFirstPage(pdfBuffer: Buffer, dpi = 150): Promi
   // the caller's Buffer is still used for error reporting and validation.
   const data = new Uint8Array(pdfBuffer);
 
+  // This MUST be passed to getDocument, not to page.render(): pdf.js resolves
+  // the factory once per document and render() ignores the option entirely.
+  // It is not only used for the page canvas — it also allocates the scratch
+  // canvases behind images, transparency groups and soft masks, so with the
+  // default factory any PDF containing a raster image (which is almost every
+  // real certificate design) dies on `canvas.createCanvas`.
+  const canvasFactory = new NodeCanvasFactory();
+
   let doc;
   try {
     doc = await pdfjs.getDocument({
       data,
+      canvasFactory,
       standardFontDataUrl: standardFontDataUrl(),
       // Both must stay off. `useSystemFonts` makes pdf.js hand non-embedded
       // fonts to the host's font matcher, which does not exist here — the text
@@ -133,7 +142,6 @@ export async function rasterizePdfFirstPage(pdfBuffer: Buffer, dpi = 150): Promi
     const page = await doc.getPage(1);
     const viewport = page.getViewport({ scale: dpi / 72 });
 
-    const canvasFactory = new NodeCanvasFactory();
     const { canvas, context } = canvasFactory.create(viewport.width, viewport.height);
 
     // PDF pages are transparent by default; certificates are printed on white.
@@ -144,9 +152,8 @@ export async function rasterizePdfFirstPage(pdfBuffer: Buffer, dpi = 150): Promi
       // The @napi-rs/canvas context is API-compatible with the 2D context
       // pdf.js expects, but not structurally identical to the DOM type.
       canvasContext: context as unknown as CanvasRenderingContext2D,
-      viewport,
-      canvasFactory
-    } as Parameters<typeof page.render>[0]).promise;
+      viewport
+    }).promise;
 
     const png = canvas.toBuffer("image/png");
     page.cleanup();

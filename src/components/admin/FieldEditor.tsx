@@ -5,12 +5,35 @@ import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { Label } from "@/components/ui/Input";
+import { Input, Label } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
-import { FIELD_DEFS, defaultFieldConfig, type FieldConfig, type FieldKey } from "@/lib/fieldTypes";
+import {
+  FIELD_DEFS,
+  clampFontSize,
+  defaultFieldConfig,
+  isCustomKey,
+  newCustomKey,
+  resolveFieldValue,
+  type FieldConfig,
+  type FieldKey
+} from "@/lib/fieldTypes";
 import { SAMPLE_VALUES } from "@/lib/sampleValues";
 
 const MAX_DISPLAY_WIDTH = 760;
+
+/** Offered as one-click swatches so changing a colour never needs the OS picker. */
+const COLOR_PRESETS = [
+  "#1b2430",
+  "#000000",
+  "#ffffff",
+  "#8a6d3b",
+  "#b4914d",
+  "#7a1f1f",
+  "#1f4f7a",
+  "#2f6b3f"
+];
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 interface TemplateData {
   id: string;
@@ -36,6 +59,10 @@ export function FieldEditor({ template }: { template: TemplateData }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // The hex box is its own state so a half-typed value like "#1b2" can sit in
+  // the input without being pushed onto the field as an invalid colour.
+  const [hexDraft, setHexDraft] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ type: "field" | "qr"; key?: FieldKey; startX: number; startY: number; origX: number; origY: number } | null>(null);
 
@@ -44,6 +71,12 @@ export function FieldEditor({ template }: { template: TemplateData }) {
   const displayHeight = template.heightPx * scale;
 
   const selectedField = fields.find((f) => f.key === selectedKey) ?? null;
+
+  // Any edit invalidates the "Template saved." confirmation — leaving it up
+  // while there are unsaved changes is how people lose work.
+  function markDirty() {
+    setSaved(false);
+  }
 
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
@@ -70,6 +103,7 @@ export function FieldEditor({ template }: { template: TemplateData }) {
         setQrX(clamp(Math.round(drag.origX + dx), 0, template.widthPx - qrSize));
         setQrY(clamp(Math.round(drag.origY + dy), 0, template.heightPx - qrSize));
       }
+      setSaved(false);
     },
     [scale, template.widthPx, template.heightPx, qrSize]
   );
@@ -82,7 +116,7 @@ export function FieldEditor({ template }: { template: TemplateData }) {
 
   function startDragField(e: React.PointerEvent, field: FieldConfig) {
     e.preventDefault();
-    setSelectedKey(field.key);
+    select(field.key);
     dragState.current = {
       type: "field",
       key: field.key,
@@ -109,20 +143,53 @@ export function FieldEditor({ template }: { template: TemplateData }) {
     };
   }, [handlePointerMove]);
 
+  function select(key: FieldKey | null) {
+    setSelectedKey(key);
+    setHexDraft(null);
+  }
+
   function addField(def: { key: FieldKey; label: string }) {
     const cfg = defaultFieldConfig(def.key, def.label, template.widthPx, template.heightPx);
+    // Stagger downward from whatever is already placed so a newly added field
+    // never lands exactly under an existing one and look like nothing happened.
+    cfg.y = clamp(
+      Math.round(template.heightPx * (0.3 + fields.length * 0.1)),
+      0,
+      template.heightPx
+    );
     setFields((prev) => [...prev, cfg]);
-    setSelectedKey(def.key);
+    select(def.key);
+    markDirty();
+  }
+
+  function addCustomField() {
+    addField({ key: newCustomKey(), label: "Custom text" });
   }
 
   function removeField(key: FieldKey) {
-    setFields((prev) => prev.filter((f) => f.key !== key));
-    if (selectedKey === key) setSelectedKey(null);
+    const removedAt = fields.findIndex((f) => f.key === key);
+    const next = fields.filter((f) => f.key !== key);
+    setFields(next);
+    if (selectedKey === key) {
+      // Move the selection to a neighbour rather than clearing it. Clearing
+      // hides the whole styling panel, which reads as the editor breaking.
+      select(next[Math.min(removedAt, next.length - 1)]?.key ?? null);
+    }
+    markDirty();
   }
 
   function updateSelected(patch: Partial<FieldConfig>) {
     if (!selectedKey) return;
     setFields((prev) => prev.map((f) => (f.key === selectedKey ? { ...f, ...patch } : f)));
+    markDirty();
+  }
+
+  function applyHexDraft(raw: string) {
+    setHexDraft(raw);
+    const candidate = raw.startsWith("#") ? raw : `#${raw}`;
+    if (HEX_RE.test(candidate)) {
+      updateSelected({ color: candidate.toLowerCase() });
+    }
   }
 
   async function handleSave() {
@@ -148,6 +215,14 @@ export function FieldEditor({ template }: { template: TemplateData }) {
 
   const availableToAdd = FIELD_DEFS.filter((def) => !fields.some((f) => f.key === def.key));
   const qrDisplaySize = qrSize * scale;
+
+  /** What a field shows on the canvas: sample data, or the custom text itself. */
+  function previewText(field: FieldConfig) {
+    const value = resolveFieldValue(field, SAMPLE_VALUES);
+    if (value) return value;
+    // An empty custom field still needs to be visible and draggable.
+    return isCustomKey(field.key) ? field.label : "";
+  }
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
@@ -198,7 +273,7 @@ export function FieldEditor({ template }: { template: TemplateData }) {
                       : "Arial, sans-serif"
               }}
             >
-              {SAMPLE_VALUES[field.key]}
+              {previewText(field)}
             </div>
           ))}
 
@@ -218,125 +293,215 @@ export function FieldEditor({ template }: { template: TemplateData }) {
           )}
         </div>
         <p className="mt-2 text-xs text-ink-400">
-          Drag any field or the QR box to reposition it. Sample values are shown so you can judge placement.
+          Click a field to style it, drag it to reposition. Sample values are shown so you can judge
+          placement — the real participant name, event and dates are filled in at generation time.
         </p>
       </div>
 
       <div className="space-y-4">
         <Card>
           <p className="text-sm font-medium text-ink-900">Fields on certificate</p>
+          {fields.length === 0 && (
+            <p className="mt-2 text-xs text-ink-400">
+              No fields on this template. Add one below.
+            </p>
+          )}
           <div className="mt-3 space-y-1">
             {fields.map((field) => (
               <button
                 key={field.key}
-                onClick={() => setSelectedKey(field.key)}
+                onClick={() => select(field.key)}
                 className={clsx(
-                  "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm",
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
                   field.key === selectedKey ? "bg-ink-900 text-paper" : "hover:bg-ink-50"
                 )}
               >
-                {field.label}
+                <span
+                  aria-hidden="true"
+                  className="h-3 w-3 shrink-0 rounded-full border border-black/20"
+                  style={{ backgroundColor: field.color }}
+                />
+                <span className="truncate">{field.label}</span>
               </button>
             ))}
           </div>
-          {availableToAdd.length > 0 && (
-            <div className="mt-3 border-t border-border pt-3">
-              <p className="mb-2 text-xs text-ink-400">Add a field</p>
-              <div className="flex flex-wrap gap-2">
-                {availableToAdd.map((def) => (
-                  <Button key={def.key} variant="secondary" size="sm" onClick={() => addField(def)}>
-                    + {def.label}
-                  </Button>
-                ))}
-              </div>
+
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="mb-2 text-xs text-ink-400">Add a field</p>
+            <div className="flex flex-wrap gap-2">
+              {availableToAdd.map((def) => (
+                <Button key={def.key} variant="secondary" size="sm" onClick={() => addField(def)}>
+                  + {def.label}
+                </Button>
+              ))}
+              <Button variant="secondary" size="sm" onClick={addCustomField}>
+                + Custom text
+              </Button>
             </div>
-          )}
+            <p className="mt-2 text-xs text-ink-400">
+              Custom text prints the same words on every certificate — a citation line, a
+              department, a signatory.
+            </p>
+          </div>
         </Card>
 
-        {selectedField && (
-          <Card>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-ink-900">{selectedField.label}</p>
-              <button
-                onClick={() => removeField(selectedField.key)}
-                className="text-xs text-danger hover:underline"
-              >
-                Remove
-              </button>
-            </div>
-
-            <div className="mt-3 space-y-3">
-              <div>
-                <Label>Font size</Label>
-                <input
-                  type="range"
-                  min={10}
-                  max={100}
-                  value={selectedField.fontSize}
-                  onChange={(e) => updateSelected({ fontSize: Number(e.target.value) })}
-                  className="w-full"
-                />
-                <p className="text-xs text-ink-400">{selectedField.fontSize}px</p>
-              </div>
-
-              <div>
-                <Label>Font family</Label>
-                <select
-                  value={selectedField.fontFamily}
-                  onChange={(e) => updateSelected({ fontFamily: e.target.value as FieldConfig["fontFamily"] })}
-                  className="w-full rounded border border-border bg-white px-2 py-1.5 text-sm"
+        <Card>
+          {!selectedField ? (
+            <p className="text-sm text-ink-400">
+              Select a field above to change its size, font, alignment and colour.
+            </p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-sm font-medium text-ink-900">{selectedField.label}</p>
+                <button
+                  onClick={() => removeField(selectedField.key)}
+                  className="shrink-0 text-xs text-danger hover:underline"
                 >
-                  <option value="serif">Serif</option>
-                  <option value="sans-serif">Sans-serif</option>
-                  <option value="monospace">Monospace</option>
-                </select>
+                  Remove
+                </button>
               </div>
 
-              <div>
-                <Label>Alignment</Label>
+              <div className="mt-3 space-y-3">
+                {isCustomKey(selectedField.key) && (
+                  <>
+                    <div>
+                      <Label htmlFor="custom-text">Text to print</Label>
+                      <Input
+                        id="custom-text"
+                        value={selectedField.text ?? ""}
+                        maxLength={200}
+                        placeholder="e.g. for outstanding performance"
+                        onChange={(e) => updateSelected({ text: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="custom-label">Name in this list</Label>
+                      <Input
+                        id="custom-label"
+                        value={selectedField.label}
+                        maxLength={60}
+                        onChange={(e) => updateSelected({ label: e.target.value })}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div>
+                  <Label>Font size</Label>
+                  <input
+                    type="range"
+                    min={10}
+                    max={200}
+                    value={selectedField.fontSize}
+                    onChange={(e) =>
+                      updateSelected({ fontSize: clampFontSize(Number(e.target.value)) })
+                    }
+                    className="w-full"
+                  />
+                  <p className="text-xs text-ink-400">
+                    {selectedField.fontSize}px on a {template.widthPx}×{template.heightPx} template
+                  </p>
+                </div>
+
+                <div>
+                  <Label htmlFor="font-family">Font family</Label>
+                  <select
+                    id="font-family"
+                    value={selectedField.fontFamily}
+                    onChange={(e) => updateSelected({ fontFamily: e.target.value as FieldConfig["fontFamily"] })}
+                    className="w-full rounded border border-border bg-white px-2 py-1.5 text-sm"
+                  >
+                    <option value="serif">Serif</option>
+                    <option value="sans-serif">Sans-serif</option>
+                    <option value="monospace">Monospace</option>
+                  </select>
+                </div>
+
+                <div>
+                  <Label>Alignment</Label>
+                  <div className="flex gap-2">
+                    {(["left", "center", "right"] as const).map((align) => (
+                      <Button
+                        key={align}
+                        variant={selectedField.align === align ? "primary" : "secondary"}
+                        size="sm"
+                        onClick={() => updateSelected({ align })}
+                      >
+                        {align}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="flex gap-2">
-                  {(["left", "center", "right"] as const).map((align) => (
-                    <Button
-                      key={align}
-                      variant={selectedField.align === align ? "primary" : "secondary"}
-                      size="sm"
-                      onClick={() => updateSelected({ align })}
-                    >
-                      {align}
-                    </Button>
-                  ))}
+                  <Button
+                    variant={selectedField.bold ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={() => updateSelected({ bold: !selectedField.bold })}
+                  >
+                    Bold
+                  </Button>
+                  <Button
+                    variant={selectedField.italic ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={() => updateSelected({ italic: !selectedField.italic })}
+                  >
+                    Italic
+                  </Button>
+                </div>
+
+                <div>
+                  <Label htmlFor="field-color">Colour</Label>
+                  {/* Swatch plus hex box: the native picker opens an OS dialog,
+                      which is easy to dismiss by accident, so typing a hex or
+                      clicking a preset always works as a fallback. */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="field-color"
+                      type="color"
+                      value={selectedField.color}
+                      onChange={(e) => {
+                        setHexDraft(null);
+                        updateSelected({ color: e.target.value });
+                      }}
+                      className="h-9 w-12 shrink-0 cursor-pointer rounded border border-border bg-white p-1"
+                    />
+                    <Input
+                      aria-label="Colour hex value"
+                      value={hexDraft ?? selectedField.color}
+                      onChange={(e) => applyHexDraft(e.target.value)}
+                      onBlur={() => setHexDraft(null)}
+                      spellCheck={false}
+                      maxLength={7}
+                      className="font-mono uppercase"
+                    />
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {COLOR_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        title={preset}
+                        aria-label={`Use ${preset}`}
+                        onClick={() => {
+                          setHexDraft(null);
+                          updateSelected({ color: preset });
+                        }}
+                        className={clsx(
+                          "h-6 w-6 rounded border",
+                          selectedField.color.toLowerCase() === preset
+                            ? "border-seal ring-2 ring-seal/40"
+                            : "border-black/20"
+                        )}
+                        style={{ backgroundColor: preset }}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
-
-              <div className="flex gap-2">
-                <Button
-                  variant={selectedField.bold ? "primary" : "secondary"}
-                  size="sm"
-                  onClick={() => updateSelected({ bold: !selectedField.bold })}
-                >
-                  Bold
-                </Button>
-                <Button
-                  variant={selectedField.italic ? "primary" : "secondary"}
-                  size="sm"
-                  onClick={() => updateSelected({ italic: !selectedField.italic })}
-                >
-                  Italic
-                </Button>
-              </div>
-
-              <div>
-                <Label>Color</Label>
-                <input
-                  type="color"
-                  value={selectedField.color}
-                  onChange={(e) => updateSelected({ color: e.target.value })}
-                  className="h-9 w-full rounded border border-border"
-                />
-              </div>
-            </div>
-          </Card>
-        )}
+            </>
+          )}
+        </Card>
 
         <Card>
           <div className="flex items-center justify-between">
@@ -344,7 +509,10 @@ export function FieldEditor({ template }: { template: TemplateData }) {
             <input
               type="checkbox"
               checked={qrEnabled}
-              onChange={(e) => setQrEnabled(e.target.checked)}
+              onChange={(e) => {
+                setQrEnabled(e.target.checked);
+                markDirty();
+              }}
             />
           </div>
           {qrEnabled && (
@@ -355,7 +523,10 @@ export function FieldEditor({ template }: { template: TemplateData }) {
                 min={60}
                 max={240}
                 value={qrSize}
-                onChange={(e) => setQrSize(Number(e.target.value))}
+                onChange={(e) => {
+                  setQrSize(Number(e.target.value));
+                  markDirty();
+                }}
                 className="w-full"
               />
               <p className="text-xs text-ink-400">{qrSize}px — links to the public verification page</p>

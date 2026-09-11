@@ -4,9 +4,12 @@ node_modules
 storage/templates/*
 storage/certificates/*
 storage/zips/*
+# holds the raw participant spreadsheet between upload and generation
+storage/tmp/*
 !storage/templates/.gitkeep
 !storage/certificates/.gitkeep
 !storage/zips/.gitkeep
+!storage/tmp/.gitkeep
 public/uploads/*
 !public/uploads/.gitkeep
 *.log

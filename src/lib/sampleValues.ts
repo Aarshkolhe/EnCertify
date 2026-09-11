@@ -1,6 +1,7 @@
-import type { FieldKey } from "@/lib/fieldTypes";
+import type { BuiltInFieldKey } from "@/lib/fieldTypes";
 
-export const SAMPLE_VALUES: Record<FieldKey, string> = {
+/** Stand-in values so the field editor shows realistic text while positioning. */
+export const SAMPLE_VALUES: Record<BuiltInFieldKey, string> = {
   participantName: "Rahul Sharma",
   certificateId: "CERT-2026-8F3K92",
   eventName: "Tech Fest 2026",

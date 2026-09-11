@@ -4,7 +4,7 @@ import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
 import QRCode from "qrcode";
 import { PDFDocument } from "pdf-lib";
 import { TEMPLATE_DIR } from "@/lib/storage";
-import type { FieldConfig } from "@/lib/fieldTypes";
+import { resolveFieldValue, type FieldConfig } from "@/lib/fieldTypes";
 
 let fontsRegistered = false;
 function ensureFonts() {
@@ -61,7 +61,10 @@ export async function renderCertificate(input: RenderCertificateInput): Promise<
   ctx.drawImage(background, 0, 0, input.widthPx, input.heightPx);
 
   for (const field of input.fields) {
-    const value = input.values[field.key];
+    // Built-in fields read from `values`; custom fields carry their own text.
+    // Both go through the same helper the editor preview uses, so what the
+    // admin positioned is what gets drawn.
+    const value = resolveFieldValue(field, input.values);
     if (!value) continue;
     ctx.font = canvasFont(field);
     ctx.fillStyle = field.color;

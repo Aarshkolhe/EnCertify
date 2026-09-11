@@ -14,9 +14,19 @@ export const eventSchema = z.object({
   status: z.enum(["ACTIVE", "ARCHIVED"]).optional()
 });
 
+// Built-in keys are filled in from the data at generation time; a
+// `custom:<id>` key carries its own fixed `text` instead, which is what lets
+// an admin put their own line on a template rather than only the five
+// predefined ones.
+const fieldKeySchema = z.union([
+  z.enum(["participantName", "certificateId", "eventName", "eventDate", "issueDate"]),
+  z.string().regex(/^custom:[A-Za-z0-9_-]{4,32}$/, "Invalid custom field key.")
+]);
+
 const fieldConfigSchema = z.object({
-  key: z.enum(["participantName", "certificateId", "eventName", "eventDate", "issueDate"]),
+  key: fieldKeySchema,
   label: z.string().min(1).max(60),
+  text: z.string().max(200).optional(),
   x: z.number().min(0),
   y: z.number().min(0),
   fontSize: z.number().min(6).max(200),
