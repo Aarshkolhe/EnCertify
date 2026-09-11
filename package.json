@@ -1,5 +1,5 @@
 {
-  "name": "certificate-system",
+  "name": "encertify",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -10,7 +10,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
     "prisma:deploy": "prisma migrate deploy",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "certs": "tsx scripts/generate-certificates.ts",
+    "certs:preview": "tsx scripts/generate-certificates.ts --preview"
   },
   "dependencies": {
     "@napi-rs/canvas": "0.1.53",
@@ -22,6 +24,7 @@
     "nanoid": "5.0.7",
     "next": "^14.2.35",
     "pdf-lib": "1.17.1",
+    "pdfjs-dist": "^4.4.168",
     "qrcode": "1.5.3",
     "react": "18.3.1",
     "react-dom": "18.3.1",

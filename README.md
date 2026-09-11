@@ -1,4 +1,4 @@
-# Certify — Certificate Issuance & Verification System
+# EnCertify — Certificate Issuance & Verification System
 
 A standalone, self-hostable full-stack app for issuing event certificates in
 bulk and letting participants find and verify them. Built fresh (no existing
@@ -16,7 +16,7 @@ Prisma + PostgreSQL**, per your choice.
   middleware check alone is never trusted).
 - Event management: create/list/archive events.
 - Certificate template management: upload a PNG/JPG/PDF template (PDFs are
-  rasterized server-side via `pdftoppm` so every template — image or PDF —
+  rasterized server-side with `pdfjs-dist` so every template — image or PDF —
   flows through one rendering pipeline), then a drag-and-drop field editor
   to position Participant Name, Certificate ID, Event Name, Event Date, and
   Certificate Issue Date, with per-field font size/family/alignment/
@@ -96,7 +96,21 @@ certificate-system/
 
 ---
 
-## 3. Database (Prisma / PostgreSQL)
+## 3. Database (Prisma / Supabase Postgres)
+
+Supabase is plain Postgres, so the schema and every query are unchanged —
+only the connection setup is Supabase-specific. The datasource declares two
+URLs, because Supabase's two pooler endpoints are not interchangeable:
+
+| | Endpoint | Port | Used by |
+|---|---|---|---|
+| `DATABASE_URL` | transaction pooler, `?pgbouncer=true` | `6543` | the app at runtime |
+| `DIRECT_URL` | session pooler | `5432` | `prisma migrate`, `prisma db push` |
+
+Migrations pointed at `6543` hang rather than fail, because the transaction
+pooler does not support the prepared statements Prisma Migrate relies on —
+so keep the two separate.
+
 
 Five models — see `prisma/schema.prisma` for full detail:
 
@@ -139,13 +153,13 @@ No migration history is included since this is a fresh schema — running
 | `clsx` | conditional Tailwind class names |
 | `tailwindcss` | styling |
 
-**System dependency (not npm):** `poppler-utils` — only needed if admins
-upload **PDF** templates (PNG/JPG templates never need it). Install with:
+| `pdfjs-dist` | rasterizes page 1 of a PDF template to PNG (pure JS) |
 
-```bash
-# Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y poppler-utils
-```
+**No system dependencies.** PDF templates are rasterized in-process by
+`pdfjs-dist` drawing onto `@napi-rs/canvas`, so there is nothing to
+`apt-get`/`brew install` and nothing that can be missing from a host's PATH.
+(This previously shelled out to poppler's `pdftoppm`; PDF uploads failed
+outright on any machine where that binary was not installed.)
 
 ---
 
@@ -155,7 +169,8 @@ See `.env.example`. Copy it to `.env` and fill in real values:
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
+| `DATABASE_URL` | Supabase **transaction pooler** string (port `6543`, `?pgbouncer=true`) — what the app queries through at runtime |
+| `DIRECT_URL` | Supabase **session pooler** string (port `5432`) — used by `prisma migrate` / `db push` only |
 | `JWT_SECRET` | long random string signing admin sessions — **do not commit a real value** |
 | `NEXT_PUBLIC_APP_URL` | public base URL, used to build the QR verification link |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME` | used once by `npm run seed` to create the first admin account |
@@ -170,17 +185,19 @@ npm install
 
 # 2. Configure environment
 cp .env.example .env
-# edit .env: set DATABASE_URL, a real JWT_SECRET, and your seed admin credentials
+# edit .env: paste both Supabase connection strings (DATABASE_URL + DIRECT_URL),
+# a real JWT_SECRET, and your seed admin credentials.
+# Both strings: Supabase dashboard -> Project Settings -> Database ->
+# Connection string. Same credentials in each; only the port differs.
+# Set AUTH_DISABLE_DB="false" once the steps below have run.
 
-# 3. (Only if you'll upload PDF templates) install poppler-utils — see above
-
-# 4. Create the database schema
+# 3. Create the database schema
 npm run prisma:migrate
 
-# 5. Create the first admin account
+# 4. Create the first admin account
 npm run seed
 
-# 6. Run it
+# 5. Run it
 npm run dev          # development, http://localhost:3000
 # or
 npm run build && npm run start   # production
@@ -241,7 +258,7 @@ following the flow the spec asks for:
 ## 8. Notes on scope decisions
 
 - **Both PNG/JPG and PDF templates render through one pipeline**: a PDF
-  upload is rasterized once (via `pdftoppm`) into the same kind of PNG
+  upload is rasterized once (via `pdfjs-dist`) into the same kind of PNG
   background an image upload would produce, so the field editor is always
   positioning against pixels, and generation always composites the same
   way. This trades a small amount of PDF vector fidelity for a

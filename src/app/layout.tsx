@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Certify — Certificate Issuance & Verification",
+  title: "EnCertify — Certificate Issuance & Verification",
   description: "Issue, manage, and verify event certificates."
 };
 

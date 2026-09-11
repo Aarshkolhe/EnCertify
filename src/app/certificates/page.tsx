@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
+import { readError, readJson } from "@/lib/fetchJson";
 
 interface EventResult {
   id: string;
@@ -42,8 +43,9 @@ export default function StudentCertificatesPage() {
     setError(null);
     try {
       const res = await fetch(`/api/certificates/search?name=${encodeURIComponent(name.trim())}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Search failed.");
+      if (!res.ok) throw new Error(await readError(res, "Search failed."));
+      const data = await readJson<{ events: EventResult[] }>(res);
+      if (!data?.events) throw new Error("Search failed. Please try again.");
       if (data.events.length === 0) {
         setError("No certificates found for that name. Check the spelling and try again.");
         setEvents([]);
@@ -66,8 +68,9 @@ export default function StudentCertificatesPage() {
       const res = await fetch(
         `/api/certificates/by-event?name=${encodeURIComponent(name.trim())}&eventId=${event.id}`
       );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not load certificates.");
+      if (!res.ok) throw new Error(await readError(res, "Could not load certificates."));
+      const data = await readJson<{ certificates: CertificateResult[] }>(res);
+      if (!data?.certificates) throw new Error("Could not load certificates. Please try again.");
       setCertificates(data.certificates);
       setStep("certificates");
     } catch (err) {

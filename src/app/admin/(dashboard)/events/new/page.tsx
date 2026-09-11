@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
+import { readError, readJson } from "@/lib/fetchJson";
 
 export default function NewEventPage() {
   const router = useRouter();
@@ -25,8 +26,7 @@ export default function NewEventPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, date, description })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not create event.");
+      if (!res.ok) throw new Error(await readError(res, "Could not create event."));
       router.push("/admin/events");
       router.refresh();
     } catch (err) {

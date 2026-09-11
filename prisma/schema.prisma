@@ -4,7 +4,17 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+
+  // Supabase gives out two connection strings and they are not
+  // interchangeable:
+  //   url       — Supavisor transaction pooler (port 6543, ?pgbouncer=true).
+  //               What the app queries through at runtime.
+  //   directUrl — session pooler (port 5432). Used by the Prisma CLI for
+  //               migrate/db push, which need prepared statements that the
+  //               transaction pooler does not support.
+  // Pointing migrations at 6543 is the usual cause of a migration hanging.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum AdminRole {

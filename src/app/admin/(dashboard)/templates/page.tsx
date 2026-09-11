@@ -3,6 +3,7 @@ import Image from "next/image";
 import { prisma } from "@/lib/db";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { DeleteAction } from "@/components/admin/DeleteAction";
 
 export default async function AdminTemplatesPage() {
   const templates = await prisma.template.findMany({
@@ -41,11 +42,23 @@ export default async function AdminTemplatesPage() {
             </div>
             <p className="mt-3 font-medium text-ink-900">{template.name}</p>
             <p className="text-xs text-ink-400">{template._count.certificates} certificates issued</p>
-            <Link href={`/admin/templates/${template.id}/edit`} className="mt-3">
-              <Button variant="secondary" size="sm" className="w-full">
-                Edit fields
-              </Button>
-            </Link>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Link href={`/admin/templates/${template.id}/edit`} className="flex-1">
+                <Button variant="secondary" size="sm" className="w-full">
+                  Edit fields
+                </Button>
+              </Link>
+              <DeleteAction
+                endpoint={`/api/admin/templates/${template.id}`}
+                heading="Delete this template?"
+                description={
+                  template._count.certificates > 0
+                    ? "This template has already been used, so it cannot be deleted until those certificates are removed."
+                    : "The template and its background image are removed permanently."
+                }
+                className="text-danger hover:bg-danger/10 hover:text-danger"
+              />
+            </div>
           </Card>
         ))}
       </div>

@@ -38,6 +38,36 @@ export function resolveWithinDir(dir: string, filename: string): string {
   return path.join(dir, base);
 }
 
+/**
+ * Deletes a stored file given the filename held on its DB row.
+ *
+ * A missing file is not an error — a record whose file has already been
+ * removed must still be deletable. The filename is resolved through
+ * `resolveWithinDir`, so a malformed or hostile DB value can never unlink
+ * anything outside `dir`. Returns true only if a file was actually removed.
+ */
+export async function deleteStoredFile(
+  dir: string,
+  filename: string | null | undefined
+): Promise<boolean> {
+  if (!filename) return false;
+
+  let target: string;
+  try {
+    target = resolveWithinDir(dir, filename);
+  } catch {
+    return false;
+  }
+
+  try {
+    await fs.unlink(target);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+}
+
 const ALLOWED_UPLOAD_EXTENSIONS = new Set(["png", "jpg", "jpeg", "pdf", "xlsx", "xls"]);
 const MAX_TEMPLATE_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_EXCEL_BYTES = 15 * 1024 * 1024; // 15MB

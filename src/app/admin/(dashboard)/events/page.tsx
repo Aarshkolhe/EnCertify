@@ -3,11 +3,12 @@ import { prisma } from "@/lib/db";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { EventActions } from "@/components/admin/EventActions";
 
 export default async function AdminEventsPage() {
   const events = await prisma.event.findMany({
     orderBy: { createdAt: "desc" },
-    include: { _count: { select: { certificates: true } } }
+    include: { _count: { select: { certificates: true, batches: true } } }
   });
 
   return (
@@ -28,19 +29,32 @@ export default async function AdminEventsPage() {
           </Card>
         )}
         {events.map((event) => (
-          <Card key={event.id} className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-ink-900">{event.name}</p>
-              <p className="text-sm text-ink-400">
-                {new Date(event.date).toLocaleDateString("en-GB", {
-                  day: "numeric",
-                  month: "long",
-                  year: "numeric"
-                })}{" "}
-                · {event._count.certificates} certificates issued
-              </p>
+          <Card key={event.id}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="font-medium text-ink-900">{event.name}</p>
+                <p className="text-sm text-ink-400">
+                  {new Date(event.date).toLocaleDateString("en-GB", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric"
+                  })}{" "}
+                  · {event._count.certificates} certificates issued
+                </p>
+              </div>
+              <Badge tone={event.status === "ACTIVE" ? "success" : "neutral"}>
+                {event.status}
+              </Badge>
             </div>
-            <Badge tone={event.status === "ACTIVE" ? "success" : "neutral"}>{event.status}</Badge>
+            <div className="mt-4 border-t border-border pt-3">
+              <EventActions
+                eventId={event.id}
+                eventName={event.name}
+                status={event.status}
+                certificateCount={event._count.certificates}
+                batchCount={event._count.batches}
+              />
+            </div>
           </Card>
         ))}
       </div>

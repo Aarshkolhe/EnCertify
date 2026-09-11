@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Label } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
+import { readError, readJson } from "@/lib/fetchJson";
 
 interface EventOption {
   id: string;
@@ -84,8 +85,9 @@ export default function GenerateCertificatesPage() {
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/admin/certificates/parse-excel", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not read the file.");
+      if (!res.ok) throw new Error(await readError(res, "Could not read the file."));
+      const data = await readJson<ParseResult>(res);
+      if (!data?.headers) throw new Error("The server did not return a readable sheet.");
       setParseResult(data);
       setNameColumn(guessColumn(data.headers, ["name", "participant name", "full name"]));
       setEmailColumn(guessColumn(data.headers, ["email", "email address"]));
@@ -116,8 +118,9 @@ export default function GenerateCertificatesPage() {
           mapping: { participantName: nameColumn, participantEmail: emailColumn || undefined }
         })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Generation failed.");
+      if (!res.ok) throw new Error(await readError(res, "Generation failed."));
+      const data = await readJson<{ summary?: GenerationSummary }>(res);
+      if (!data?.summary) throw new Error("Generation finished but returned no summary.");
       setSummary(data.summary);
       setStep("result");
     } catch (err) {

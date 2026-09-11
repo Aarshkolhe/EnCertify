@@ -2,7 +2,10 @@ import clsx from "clsx";
 import type { ButtonHTMLAttributes } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "ghost" | "danger";
+  // `inverse` / `outline` are the two that read correctly on a dark (ink-900)
+  // background; overriding the colours of `primary` via className does not
+  // work, since Tailwind resolves the conflict by stylesheet order.
+  variant?: "primary" | "secondary" | "ghost" | "danger" | "inverse" | "outline";
   size?: "sm" | "md";
 }
 
@@ -22,6 +25,9 @@ export function Button({
           "border border-border bg-white text-ink-900 hover:bg-ink-50",
         variant === "ghost" && "text-ink-400 hover:bg-ink-50 hover:text-ink-900",
         variant === "danger" && "bg-danger text-white hover:bg-danger/90",
+        variant === "inverse" && "bg-paper text-ink-900 hover:bg-white",
+        variant === "outline" &&
+          "border border-white/25 bg-transparent text-paper hover:bg-white/10",
         className
       )}
       {...props}

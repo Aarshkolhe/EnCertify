@@ -15,7 +15,10 @@ export const FIELD_DEFS: { key: FieldKey; label: string }[] = [
 
 export type TextAlign = "left" | "center" | "right";
 
-export interface FieldConfig {
+// A type alias rather than an interface on purpose: only aliases get an
+// implicit index signature, which is what lets `FieldConfig[]` be assigned
+// straight to a Prisma `Json` column without an `as unknown as` cast.
+export type FieldConfig = {
   key: FieldKey;
   label: string;
   x: number; // px, relative to template's native width, anchored at text center-x per align

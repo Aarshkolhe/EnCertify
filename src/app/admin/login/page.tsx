@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
 import { readError } from "@/lib/fetchJson";
+import { LogoFull } from "@/components/Logo";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -36,9 +37,23 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-ink-900 px-6">
-      <Card className="w-full max-w-sm">
-        <span className="text-sm font-medium text-seal-dark">Certify</span>
+    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-ink-900 px-6 py-12">
+      <div aria-hidden="true" className="auth-wash absolute inset-0" />
+
+      {/*
+        The logo is a near-black plate, which reads as a dull patch straight
+        on the navy ground — so it is set in a lit frame instead: a gold bloom
+        behind it, a thin gradient edge, and a slow sheen passing over it.
+        The artwork itself is untouched.
+      */}
+      <div className="rise relative mb-9">
+        <div className="overflow-hidden rounded-2xl shadow-[0_30px_60px_-24px_rgba(0,0,0,0.8)] ring-1 ring-white/10">
+          <LogoFull className="w-56" />
+        </div>
+      </div>
+
+      <Card className="rise relative w-full max-w-sm [animation-delay:130ms]">
+        <span className="block text-sm font-medium text-seal-dark">EnCertify</span>
         <h1 className="mt-1 font-display text-2xl text-ink-900">Admin sign in</h1>
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <div>

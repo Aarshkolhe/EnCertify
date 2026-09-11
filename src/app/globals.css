@@ -27,3 +27,200 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Landing page presentation helpers.
+   Kept as plain CSS (rather than Tailwind config entries) because these are
+   only used by the marketing surface, and the reduced-motion block above
+   already neutralises every animation defined here.
+   --------------------------------------------------------------------------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes drift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0);
+  }
+}
+
+@keyframes sheen {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 200% 50%;
+  }
+}
+
+.rise {
+  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.drift {
+  animation: drift 7s ease-in-out infinite;
+}
+
+/* Warm paper wash behind the hero. */
+.hero-wash {
+  background-image:
+    radial-gradient(60rem 32rem at 78% 8%, rgba(199, 169, 107, 0.28), transparent 62%),
+    radial-gradient(48rem 30rem at 8% 0%, rgba(27, 36, 48, 0.08), transparent 60%);
+}
+
+/* Faint engraved grid, faded out at the edges. */
+.hero-grid {
+  background-image:
+    linear-gradient(to right, rgba(27, 36, 48, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(27, 36, 48, 0.06) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(46rem 30rem at 50% 20%, #000, transparent 78%);
+  mask-image: radial-gradient(46rem 30rem at 50% 20%, #000, transparent 78%);
+}
+
+/* Gold foil text used for the single accent word in the headline. */
+.foil {
+  background-image: linear-gradient(
+    100deg,
+    #8A6D3B 0%,
+    #C7A96B 22%,
+    #F0DFB8 38%,
+    #C7A96B 54%,
+    #8A6D3B 78%,
+    #C7A96B 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: sheen 9s linear infinite alternate;
+}
+
+/* --- Scroll reveal (driven by ScrollReveal.tsx) --------------------------- */
+
+[data-reveal] {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
+  transition:
+    opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-reveal].is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* --- Hover + ambient motion ---------------------------------------------- */
+
+.lift {
+  transition:
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.3s ease,
+    border-color 0.3s ease;
+}
+
+.lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 18px 40px -22px rgba(27, 36, 48, 0.45);
+}
+
+/* Live indicator on the hero badge. */
+@keyframes ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.ping::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background-color: #8a6d3b;
+  animation: ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Slow gold sweep across the hero certificate, reading as a verification pass. */
+@keyframes scan {
+  0% {
+    transform: translateY(-120%);
+  }
+  55%,
+  100% {
+    transform: translateY(430%);
+  }
+}
+
+.scan::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 24%;
+  background-image: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(199, 169, 107, 0.3),
+    transparent
+  );
+  transform: translateY(-120%);
+  animation: scan 5.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/*
+ * Soft light bloom behind the sign-in screen so the dark ground is not flat.
+ * Neutral paper tint rather than gold, to match the admin shell.
+ */
+.auth-wash {
+  background-image:
+    radial-gradient(38rem 24rem at 50% -2%, rgba(247, 245, 240, 0.1), transparent 66%),
+    radial-gradient(30rem 20rem at 50% 102%, rgba(247, 245, 240, 0.05), transparent 70%);
+}
+
+/* --- Admin shell ---------------------------------------------------------- */
+
+/*
+ * Soft neutral depth for the admin working area. Deliberately ink-tinted
+ * rather than gold: this is a surface people stare at all day, so it stays
+ * quiet and lets the cards carry the contrast.
+ */
+.admin-bg {
+  background-color: #f7f5f0;
+  background-image:
+    radial-gradient(44rem 28rem at 10% -8%, rgba(27, 36, 48, 0.06), transparent 62%),
+    radial-gradient(38rem 24rem at 100% -4%, rgba(27, 36, 48, 0.045), transparent 60%),
+    radial-gradient(32rem 22rem at 50% 112%, rgba(27, 36, 48, 0.035), transparent 66%);
+}
+
+/* Faint dot field, faded out before it reaches the content. */
+.admin-dots {
+  background-image: radial-gradient(rgba(27, 36, 48, 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(52rem 34rem at 50% -4%, #000, transparent 78%);
+  mask-image: radial-gradient(52rem 34rem at 50% -4%, #000, transparent 78%);
+}
+
+/* Sidebar gets the inverse treatment: a very slight warm lift off pure white. */
+.admin-rail {
+  background-image: linear-gradient(to bottom, #ffffff 0%, #fdfcfa 55%, #f9f7f3 100%);
+}

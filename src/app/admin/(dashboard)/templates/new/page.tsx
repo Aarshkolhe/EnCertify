@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
+import { readError, readJson } from "@/lib/fetchJson";
 
 export default function NewTemplatePage() {
   const router = useRouter();
@@ -27,8 +28,13 @@ export default function NewTemplatePage() {
       formData.append("name", name);
       formData.append("file", file);
       const res = await fetch("/api/admin/templates/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed.");
+      if (!res.ok) throw new Error(await readError(res, "Upload failed."));
+      const data = await readJson<{ template?: { id: string } }>(res);
+      if (!data?.template?.id) throw new Error("The server did not return the new template.");
+      // The templates list is a server component sitting in the client router
+      // cache. Without this the new template is missing from it for ~30s after
+      // a successful upload, which reads as "the upload did nothing".
+      router.refresh();
       router.push(`/admin/templates/${data.template.id}/edit`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -61,7 +67,11 @@ export default function NewTemplatePage() {
               className="block w-full text-sm text-ink-700"
               required
             />
-            <p className="mt-1 text-xs text-ink-400">Max 10MB. You'll position fields on the next screen.</p>
+            <p className="mt-1 text-xs text-ink-400">
+              Max 10MB. Print-resolution designs are fine — anything over 4000px
+              is scaled down automatically. PDFs are converted to an image
+              automatically; only page 1 is used.
+            </p>
           </div>
           {error && <Alert tone="danger">{error}</Alert>}
           <Button type="submit" disabled={loading}>

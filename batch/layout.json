@@ -1,0 +1,21 @@
+{
+  "name": {
+    "centerX": 0.5,
+    "centerY": 0.482,
+    "maxWidth": 0.62,
+    "fontSize": 0.058,
+    "minFontSize": 0.032,
+    "lineHeight": 1.15,
+    "fontFamily": "Georgia, 'Times New Roman', serif",
+    "fontFile": null,
+    "color": "#1B2430",
+    "bold": false,
+    "italic": false,
+    "uppercase": false
+  },
+  "output": {
+    "pdf": true,
+    "png": false,
+    "zip": true
+  }
+}

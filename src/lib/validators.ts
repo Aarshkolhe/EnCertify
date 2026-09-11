@@ -8,7 +8,10 @@ export const loginSchema = z.object({
 export const eventSchema = z.object({
   name: z.string().trim().min(2).max(120),
   date: z.string().min(1), // ISO date string
-  description: z.string().trim().max(2000).optional().nullable()
+  description: z.string().trim().max(2000).optional().nullable(),
+  // Archiving is the non-destructive alternative to deleting an event: the
+  // certificates and their verification links stay intact.
+  status: z.enum(["ACTIVE", "ARCHIVED"]).optional()
 });
 
 const fieldConfigSchema = z.object({

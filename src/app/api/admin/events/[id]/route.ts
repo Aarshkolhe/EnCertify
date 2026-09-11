@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdmin, errorResponse } from "@/lib/apiAuth";
 import { eventSchema } from "@/lib/validators";
+import { deleteEventCascade } from "@/lib/adminDelete";
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const { admin, error } = await requireAdmin();
@@ -37,26 +38,41 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     data: {
       name: parsed.data.name,
       date,
-      description: parsed.data.description
+      description: parsed.data.description,
+      status: parsed.data.status
     }
   });
 
   return NextResponse.json({ event });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+/**
+ * Permanently deletes an event, every certificate issued for it, and every
+ * generation batch belonging to it — rows and files alike.
+ *
+ * This is irreversible and breaks the public verification link of every
+ * certificate involved, so it is gated on `?confirm=<exact event name>`.
+ * Hiding the button in the UI is not a safeguard; this is. Archiving
+ * (PUT with status ARCHIVED) remains the non-destructive option.
+ */
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const { admin, error } = await requireAdmin();
   if (!admin) return error;
 
-  const existing = await prisma.event.findUnique({ where: { id: params.id } });
+  const existing = await prisma.event.findUnique({
+    where: { id: params.id },
+    include: { _count: { select: { certificates: true, batches: true } } }
+  });
   if (!existing) return errorResponse("Event not found.", 404);
 
-  // Archive rather than hard-delete so existing certificates keep a valid
-  // event reference and verification keeps working.
-  const event = await prisma.event.update({
-    where: { id: params.id },
-    data: { status: "ARCHIVED" }
-  });
+  const confirm = req.nextUrl.searchParams.get("confirm");
+  if (confirm !== existing.name) {
+    return errorResponse(
+      "Type the event name exactly to confirm deletion.",
+      400
+    );
+  }
 
-  return NextResponse.json({ event });
+  const summary = await deleteEventCascade(params.id);
+  return NextResponse.json({ ok: true, deleted: summary });
 }

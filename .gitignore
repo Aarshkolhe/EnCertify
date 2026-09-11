@@ -10,3 +10,11 @@ storage/zips/*
 public/uploads/*
 !public/uploads/.gitkeep
 *.log
+
+# bulk generation workspace — participant data and rendered output stay local
+batch/out/
+batch/*.xlsx
+batch/*.xls
+batch/*.csv
+batch/fonts/*
+!batch/fonts/.gitkeep
