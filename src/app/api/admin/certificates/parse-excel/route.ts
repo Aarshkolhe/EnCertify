@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "node:path";
-import fs from "node:fs/promises";
 import { requireAdmin, errorResponse } from "@/lib/apiAuth";
-import { ensureStorageDirs, assertAllowedExtension, assertWithinSizeLimit, TMP_DIR, safeFilename } from "@/lib/storage";
+import {
+  ensureStorageDirs,
+  assertAllowedExtension,
+  assertWithinSizeLimit,
+  TMP_DIR,
+  safeFilename,
+  putObject
+} from "@/lib/storage";
 import { parseWorkbookBuffer } from "@/lib/excelParser";
 
 export const runtime = "nodejs";
@@ -49,8 +54,15 @@ export async function POST(req: NextRequest) {
     return errorResponse("The uploaded file has no participant rows.", 422);
   }
 
+  // The workbook has to survive until the separate /generate request picks it
+  // up, so it is parked in object storage rather than on the instance.
   const uploadId = safeFilename(ext);
-  await fs.writeFile(path.join(TMP_DIR, uploadId), buffer);
+  await putObject(
+    TMP_DIR,
+    uploadId,
+    buffer,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
 
   return NextResponse.json({
     uploadId,

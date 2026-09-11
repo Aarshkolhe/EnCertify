@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "node:fs/promises";
 import { prisma } from "@/lib/db";
 import { requireAdmin, errorResponse } from "@/lib/apiAuth";
-import { TEMPLATE_DIR, resolveWithinDir } from "@/lib/storage";
+import { TEMPLATE_DIR, getObject } from "@/lib/storage";
+
+export const runtime = "nodejs";
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const { admin, error } = await requireAdmin();
@@ -13,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
   let buffer: Buffer;
   try {
-    buffer = await fs.readFile(resolveWithinDir(TEMPLATE_DIR, template.fileUrl));
+    buffer = await getObject(TEMPLATE_DIR, template.fileUrl);
   } catch {
     return errorResponse("Template image not found.", 404);
   }

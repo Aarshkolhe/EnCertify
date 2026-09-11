@@ -1,11 +1,18 @@
-import path from "node:path";
-import fs from "node:fs/promises";
 import { prisma } from "@/lib/db";
-import { CERTIFICATE_DIR, ZIP_DIR, TMP_DIR, resolveWithinDir, safeFilename } from "@/lib/storage";
+import {
+  CERTIFICATE_DIR,
+  ZIP_DIR,
+  TMP_DIR,
+  safeFilename,
+  ensureStorageDirs,
+  getObject,
+  putObject,
+  deleteStoredFile
+} from "@/lib/storage";
 import { parseWorkbookBuffer, buildParticipants, type ColumnMapping } from "@/lib/excelParser";
 import { generateUniqueCertificateId } from "@/lib/certId";
 import { renderCertificate } from "@/lib/certificateRenderer";
-import { createZip, safeArcFilename } from "@/lib/zip";
+import { createZipBuffer, safeArcFilename, type ZipEntry } from "@/lib/zip";
 import { formatCertificateDate } from "@/lib/dates";
 import type { FieldConfig } from "@/lib/fieldTypes";
 
@@ -25,6 +32,8 @@ export async function runGenerationBatch(params: {
   issueDate: string;
   mapping: ColumnMapping;
 }): Promise<GenerationSummary> {
+  await ensureStorageDirs();
+
   const event = await prisma.event.findUnique({ where: { id: params.eventId } });
   if (!event) throw new Error("Event not found.");
 
@@ -34,10 +43,9 @@ export async function runGenerationBatch(params: {
   const issueDateObj = new Date(params.issueDate);
   if (Number.isNaN(issueDateObj.getTime())) throw new Error("Invalid issue date.");
 
-  const tmpPath = resolveWithinDir(TMP_DIR, params.uploadId);
   let buffer: Buffer;
   try {
-    buffer = await fs.readFile(tmpPath);
+    buffer = await getObject(TMP_DIR, params.uploadId);
   } catch {
     throw new Error("The uploaded file has expired or was not found. Please upload it again.");
   }
@@ -59,7 +67,10 @@ export async function runGenerationBatch(params: {
   });
 
   const fields = template.fields as unknown as FieldConfig[];
-  const zipEntries: { absolutePath: string; arcName: string }[] = [];
+  // Each rendered PDF is kept alongside its upload so the ZIP can be assembled
+  // from the buffers already in hand, rather than downloading every certificate
+  // back out of object storage a second time.
+  const zipEntries: ZipEntry[] = [];
   const generationErrors: { row: number; reason: string }[] = [...errors];
   let successCount = 0;
 
@@ -92,8 +103,7 @@ export async function runGenerationBatch(params: {
       });
 
       const storedFilename = safeFilename("pdf");
-      const absolutePath = path.join(CERTIFICATE_DIR, storedFilename);
-      await fs.writeFile(absolutePath, pdfBuffer);
+      await putObject(CERTIFICATE_DIR, storedFilename, pdfBuffer, "application/pdf");
 
       await prisma.certificate.create({
         data: {
@@ -110,7 +120,7 @@ export async function runGenerationBatch(params: {
       });
 
       zipEntries.push({
-        absolutePath,
+        data: pdfBuffer,
         arcName: safeArcFilename(participant.participantName, certificateId, "pdf")
       });
       successCount += 1;
@@ -125,8 +135,8 @@ export async function runGenerationBatch(params: {
   let zipUrl: string | null = null;
   if (zipEntries.length > 0) {
     const zipFilename = safeFilename("zip");
-    const zipPath = path.join(ZIP_DIR, zipFilename);
-    await createZip(zipEntries, zipPath);
+    const zipBuffer = await createZipBuffer(zipEntries);
+    await putObject(ZIP_DIR, zipFilename, zipBuffer, "application/zip");
     zipUrl = zipFilename;
   }
 
@@ -141,7 +151,7 @@ export async function runGenerationBatch(params: {
     }
   });
 
-  await fs.unlink(tmpPath).catch(() => {});
+  await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
 
   return {
     batchId: batch.id,

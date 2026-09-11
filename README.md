@@ -90,9 +90,15 @@ certificate-system/
 │           ├── admin/            events, templates (+ upload, + preview),
 │           │                     certificates (parse-excel, generate, download-zip)
 │           └── certificates|certificate/   public search, by-event, verify, file
-└── storage/                     runtime file storage (gitignored) — templates,
-                                   certificates, zips, tmp excel uploads
 ```
+
+Uploaded and generated files (template backgrounds, certificate PDFs, batch ZIPs,
+and the spreadsheet held between upload and generation) live in a private
+Supabase Storage bucket, not on the filesystem — a serverless host mounts its
+deployment read-only and gives each instance a separate, short-lived `/tmp`, so
+nothing written to disk survives the request that wrote it. `src/lib/storage.ts`
+is the only module that talks to the bucket; the bucket itself is private and
+every read goes through an API route that checks the DB record first.
 
 ---
 
@@ -171,6 +177,9 @@ See `.env.example`. Copy it to `.env` and fill in real values:
 |---|---|
 | `DATABASE_URL` | Supabase **transaction pooler** string (port `6543`, `?pgbouncer=true`) — what the app queries through at runtime |
 | `DIRECT_URL` | Supabase **session pooler** string (port `5432`) — used by `prisma migrate` / `db push` only |
+| `SUPABASE_URL` | Supabase project URL (Project Settings → API) — where template images, certificate PDFs and batch ZIPs are stored |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase **service_role** key — the storage bucket is private, so reads/writes need it. Server-side only; never prefix it with `NEXT_PUBLIC_` |
+| `SUPABASE_STORAGE_BUCKET` | bucket name, defaults to `encertify`. Created automatically on first upload if it does not exist |
 | `JWT_SECRET` | long random string signing admin sessions — **do not commit a real value** |
 | `NEXT_PUBLIC_APP_URL` | public base URL, used to build the QR verification link |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME` | used once by `npm run seed` to create the first admin account |
@@ -189,6 +198,8 @@ cp .env.example .env
 # a real JWT_SECRET, and your seed admin credentials.
 # Both strings: Supabase dashboard -> Project Settings -> Database ->
 # Connection string. Same credentials in each; only the port differs.
+# Also paste SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY from
+# Project Settings -> API — file storage does not work without them.
 # Set AUTH_DISABLE_DB="false" once the steps below have run.
 
 # 3. Create the database schema

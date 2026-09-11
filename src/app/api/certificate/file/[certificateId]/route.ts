@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "node:fs/promises";
 import { prisma } from "@/lib/db";
-import { CERTIFICATE_DIR, resolveWithinDir } from "@/lib/storage";
+import { CERTIFICATE_DIR, getObject } from "@/lib/storage";
 import { safeArcFilename } from "@/lib/zip";
+
+export const runtime = "nodejs";
 
 export async function GET(req: NextRequest, { params }: { params: { certificateId: string } }) {
   const certificate = await prisma.certificate.findUnique({
@@ -15,8 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: { certificateI
 
   let fileBuffer: Buffer;
   try {
-    const filePath = resolveWithinDir(CERTIFICATE_DIR, certificate.fileUrl);
-    fileBuffer = await fs.readFile(filePath);
+    fileBuffer = await getObject(CERTIFICATE_DIR, certificate.fileUrl);
   } catch {
     return NextResponse.json({ error: "Certificate file not found." }, { status: 404 });
   }

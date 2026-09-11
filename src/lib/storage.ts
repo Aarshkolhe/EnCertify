@@ -1,23 +1,80 @@
 import path from "node:path";
-import fs from "node:fs/promises";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
 
-// All runtime file storage lives outside of `public/`, except template
-// preview images which are safe to serve directly since they never
-// contain participant data. Certificates and generated ZIPs are only
-// ever served through API routes that check the DB record first.
-export const STORAGE_ROOT = path.join(process.cwd(), "storage");
-export const TEMPLATE_DIR = path.join(STORAGE_ROOT, "templates");
-export const CERTIFICATE_DIR = path.join(STORAGE_ROOT, "certificates");
-export const ZIP_DIR = path.join(STORAGE_ROOT, "zips");
-export const TMP_DIR = path.join(STORAGE_ROOT, "tmp");
+/**
+ * All runtime file storage lives in a private Supabase Storage bucket.
+ *
+ * This used to write under `process.cwd()/storage`. That works on a long-lived
+ * server but not on a serverless host: Vercel mounts the deployment bundle
+ * read-only (writes fail with EROFS) and the one writable path, /tmp, is
+ * per-instance and wiped between invocations — so a template uploaded by one
+ * lambda is simply gone when the next one tries to render from it. Every file
+ * here outlives the request that created it, so all of them need a real
+ * object store.
+ *
+ * Nothing is served from the bucket directly. The bucket is private and reads
+ * go through API routes that check the DB record first, which is the same
+ * access model the on-disk layout had.
+ */
 
-export async function ensureStorageDirs() {
-  await Promise.all(
-    [TEMPLATE_DIR, CERTIFICATE_DIR, ZIP_DIR, TMP_DIR].map((dir) =>
-      fs.mkdir(dir, { recursive: true })
-    )
-  );
+export const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "encertify";
+
+// Key prefixes within the bucket. These deliberately keep the directory names
+// the on-disk layout used: `fileUrl` / `zipUrl` on existing rows store a bare
+// filename, so those rows keep resolving without a data migration.
+export const TEMPLATE_DIR = "templates";
+export const CERTIFICATE_DIR = "certificates";
+export const ZIP_DIR = "zips";
+export const TMP_DIR = "tmp";
+
+let client: SupabaseClient | null = null;
+
+/**
+ * The service role key is required — the buckets are private and these calls
+ * all run server-side in API routes that have already checked admin auth. The
+ * anon key cannot read or write them, by design.
+ */
+function storageClient(): SupabaseClient {
+  if (client) return client;
+
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error(
+      "File storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
+    );
+  }
+
+  client = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+  return client;
+}
+
+let bucketReady: Promise<void> | null = null;
+
+/**
+ * Creates the bucket if it does not exist yet. Memoized, so the round trip
+ * happens once per warm instance rather than on every upload. A failure
+ * clears the memo so the next request retries instead of caching the error.
+ */
+export function ensureStorageDirs(): Promise<void> {
+  if (!bucketReady) {
+    bucketReady = (async () => {
+      const { error } = await storageClient().storage.createBucket(STORAGE_BUCKET, {
+        public: false
+      });
+      // Already existing is the normal steady state, not a failure.
+      if (error && !/exist/i.test(error.message)) {
+        throw new Error(`Could not prepare storage bucket: ${error.message}`);
+      }
+    })().catch((err) => {
+      bucketReady = null;
+      throw err;
+    });
+  }
+  return bucketReady;
 }
 
 /** Generates a random, non-guessable filename — never derived from user input. */
@@ -27,45 +84,76 @@ export function safeFilename(extension: string) {
 }
 
 /**
- * Resolves a stored filename to an absolute path within `dir`, rejecting
- * anything that would escape the directory (path traversal).
+ * Builds the object key for a stored filename under `prefix`, rejecting
+ * anything that would escape it. The guard is kept from the filesystem version:
+ * these values come off DB rows, and a malformed or hostile one must not be
+ * able to address an object outside its own prefix.
  */
-export function resolveWithinDir(dir: string, filename: string): string {
-  const base = path.basename(filename);
-  if (base !== filename || filename.includes("..")) {
+export function objectKey(prefix: string, filename: string): string {
+  const base = path.posix.basename(filename);
+  if (base !== filename || filename.includes("..") || filename.includes("/")) {
     throw new Error("Invalid filename.");
   }
-  return path.join(dir, base);
+  return `${prefix}/${base}`;
+}
+
+/** Uploads bytes under `prefix`, overwriting any object already at that key. */
+export async function putObject(
+  prefix: string,
+  filename: string,
+  body: Buffer,
+  contentType: string
+): Promise<void> {
+  const key = objectKey(prefix, filename);
+  const { error } = await storageClient()
+    .storage.from(STORAGE_BUCKET)
+    .upload(key, body, { contentType, upsert: true });
+
+  if (error) throw new Error(`Could not store ${key}: ${error.message}`);
+}
+
+/** Downloads a stored object. Throws if it is missing — callers map that to a 404. */
+export async function getObject(prefix: string, filename: string): Promise<Buffer> {
+  const key = objectKey(prefix, filename);
+  const { data, error } = await storageClient()
+    .storage.from(STORAGE_BUCKET)
+    .download(key);
+
+  if (error || !data) {
+    throw new Error(`Could not read ${key}: ${error?.message ?? "not found"}`);
+  }
+  return Buffer.from(await data.arrayBuffer());
 }
 
 /**
  * Deletes a stored file given the filename held on its DB row.
  *
- * A missing file is not an error — a record whose file has already been
+ * A missing object is not an error — a record whose file has already been
  * removed must still be deletable. The filename is resolved through
- * `resolveWithinDir`, so a malformed or hostile DB value can never unlink
- * anything outside `dir`. Returns true only if a file was actually removed.
+ * `objectKey`, so a malformed or hostile DB value can never address anything
+ * outside `prefix`. Returns true only if an object was actually removed.
  */
 export async function deleteStoredFile(
-  dir: string,
+  prefix: string,
   filename: string | null | undefined
 ): Promise<boolean> {
   if (!filename) return false;
 
-  let target: string;
+  let key: string;
   try {
-    target = resolveWithinDir(dir, filename);
+    key = objectKey(prefix, filename);
   } catch {
     return false;
   }
 
-  try {
-    await fs.unlink(target);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw err;
-  }
+  const { data, error } = await storageClient()
+    .storage.from(STORAGE_BUCKET)
+    .remove([key]);
+
+  if (error) throw new Error(`Could not delete ${key}: ${error.message}`);
+  // `remove` succeeds on a key that was not there; the returned array is what
+  // distinguishes an actual deletion from a no-op.
+  return (data?.length ?? 0) > 0;
 }
 
 const ALLOWED_UPLOAD_EXTENSIONS = new Set(["png", "jpg", "jpeg", "pdf", "xlsx", "xls"]);

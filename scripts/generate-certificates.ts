@@ -22,7 +22,7 @@ import path from "node:path";
 import { createCanvas, loadImage, GlobalFonts, type SKRSContext2D } from "@napi-rs/canvas";
 import { PDFDocument } from "pdf-lib";
 import { parseWorkbookBuffer, buildParticipants } from "../src/lib/excelParser";
-import { createZip, type ZipEntry } from "../src/lib/zip";
+import { createZipBuffer, type ZipEntry } from "../src/lib/zip";
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 
@@ -332,15 +332,14 @@ async function main() {
     const stem = seen === 0 ? base : `${base}_${seen + 1}`;
 
     if (layout.output.png) {
-      const pngPath = path.join(outDir, `${stem}.png`);
-      await fsp.writeFile(pngPath, pngBuffer);
-      zipEntries.push({ absolutePath: pngPath, arcName: `${stem}.png` });
+      await fsp.writeFile(path.join(outDir, `${stem}.png`), pngBuffer);
+      zipEntries.push({ data: pngBuffer, arcName: `${stem}.png` });
     }
 
     if (layout.output.pdf) {
-      const pdfPath = path.join(outDir, `${stem}.pdf`);
-      await fsp.writeFile(pdfPath, await pngToPdf(pngBuffer, width, height));
-      zipEntries.push({ absolutePath: pdfPath, arcName: `${stem}.pdf` });
+      const pdfBuffer = await pngToPdf(pngBuffer, width, height);
+      await fsp.writeFile(path.join(outDir, `${stem}.pdf`), pdfBuffer);
+      zipEntries.push({ data: pdfBuffer, arcName: `${stem}.pdf` });
     }
 
     console.log(`  + ${participant.participantName}`);
@@ -355,7 +354,7 @@ async function main() {
 
   if (layout.output.zip && zipEntries.length) {
     const zipPath = path.join(outDir, "certificates.zip");
-    await createZip(zipEntries, zipPath);
+    await fsp.writeFile(zipPath, await createZipBuffer(zipEntries));
     console.log(`\nZIP      : ${path.relative(PROJECT_ROOT, zipPath)}`);
   }
 

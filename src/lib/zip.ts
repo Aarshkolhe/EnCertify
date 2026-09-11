@@ -1,24 +1,36 @@
-import fs from "node:fs";
 import archiver from "archiver";
 
 export interface ZipEntry {
-  absolutePath: string;
+  data: Buffer;
   arcName: string; // e.g. "Rahul_Sharma_CERT-2026-8F3K92.pdf"
 }
 
-export function createZip(entries: ZipEntry[], outputPath: string): Promise<void> {
+/**
+ * Builds the batch ZIP entirely in memory and returns its bytes.
+ *
+ * The previous version streamed to a file on disk, which a serverless host has
+ * nowhere to put. Working in memory also avoids re-downloading every rendered
+ * PDF back out of object storage just to zip it — generation already holds each
+ * buffer, so it appends them directly.
+ *
+ * The trade-off is that peak memory scales with the batch: the whole archive is
+ * resident before it is uploaded. That is fine for the few-hundred-certificate
+ * batches this is built for; a batch large enough to strain it needs to be a
+ * background job rather than a longer request.
+ */
+export function createZipBuffer(entries: ZipEntry[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const output = fs.createWriteStream(outputPath);
     const archive = archiver("zip", { zlib: { level: 9 } });
+    const chunks: Buffer[] = [];
 
-    output.on("close", () => resolve());
-    archive.on("error", (err) => reject(err));
+    archive.on("data", (chunk: Buffer) => chunks.push(chunk));
+    archive.on("error", reject);
+    archive.on("end", () => resolve(Buffer.concat(chunks)));
 
-    archive.pipe(output);
     for (const entry of entries) {
-      archive.file(entry.absolutePath, { name: entry.arcName });
+      archive.append(entry.data, { name: entry.arcName });
     }
-    archive.finalize();
+    archive.finalize().catch(reject);
   });
 }
 

@@ -1,11 +1,9 @@
-import path from "node:path";
-import fs from "node:fs/promises";
 import { loadImage, createCanvas } from "@napi-rs/canvas";
 import { rasterizePdfFirstPage } from "@/lib/pdfPreview";
-import { TEMPLATE_DIR, safeFilename } from "@/lib/storage";
+import { TEMPLATE_DIR, safeFilename, putObject } from "@/lib/storage";
 
 export interface ProcessedTemplate {
-  storedFilename: string; // filename within TEMPLATE_DIR
+  storedFilename: string; // object name under the TEMPLATE_DIR prefix
   widthPx: number;
   heightPx: number;
   fileType: "IMAGE" | "PDF";
@@ -19,8 +17,8 @@ const MAX_DIMENSION = 4000;
 
 /**
  * Accepts the raw bytes of an uploaded template (png/jpg/pdf) and
- * produces a single normalized PNG background stored under
- * storage/templates. Both the field editor preview and final
+ * produces a single normalized PNG background stored under the
+ * templates/ prefix in object storage. Both the field editor preview and final
  * certificate generation read from this same file, so what the admin
  * sees while positioning fields is exactly what gets rendered.
  */
@@ -64,7 +62,7 @@ export async function processTemplateUpload(
   }
 
   const storedFilename = safeFilename("png");
-  await fs.writeFile(path.join(TEMPLATE_DIR, storedFilename), pngBuffer);
+  await putObject(TEMPLATE_DIR, storedFilename, pngBuffer, "image/png");
 
   return {
     storedFilename,
