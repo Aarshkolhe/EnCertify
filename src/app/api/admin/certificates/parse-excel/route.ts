@@ -18,7 +18,17 @@ export async function POST(req: NextRequest) {
   const { admin, error } = await requireAdmin();
   if (!admin) return error;
 
-  await ensureStorageDirs();
+  // See the note in templates/upload — a storage failure has to come back as a
+  // readable error, not an unhandled throw the client renders as a generic 500.
+  try {
+    await ensureStorageDirs();
+  } catch (err) {
+    console.error("[parse-excel] storage unavailable:", err);
+    return errorResponse(
+      err instanceof Error ? err.message : "File storage is unavailable.",
+      503
+    );
+  }
 
   let formData: FormData;
   try {
@@ -57,12 +67,20 @@ export async function POST(req: NextRequest) {
   // The workbook has to survive until the separate /generate request picks it
   // up, so it is parked in object storage rather than on the instance.
   const uploadId = safeFilename(ext);
-  await putObject(
-    TMP_DIR,
-    uploadId,
-    buffer,
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  );
+  try {
+    await putObject(
+      TMP_DIR,
+      uploadId,
+      buffer,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+  } catch (err) {
+    console.error("[parse-excel] could not park upload:", err);
+    return errorResponse(
+      err instanceof Error ? err.message : "Could not store the uploaded file.",
+      503
+    );
+  }
 
   return NextResponse.json({
     uploadId,

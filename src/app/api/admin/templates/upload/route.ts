@@ -11,7 +11,19 @@ export async function POST(req: NextRequest) {
   const { admin, error } = await requireAdmin();
   if (!admin) return error;
 
-  await ensureStorageDirs();
+  // A storage misconfiguration (missing Supabase credentials, unreachable
+  // bucket) is an infrastructure problem, not a bad request. Report it as one
+  // instead of letting it throw — an unhandled throw returns a bodyless 500,
+  // which the client can only render as a generic "the server had a problem".
+  try {
+    await ensureStorageDirs();
+  } catch (err) {
+    console.error("[templates/upload] storage unavailable:", err);
+    return errorResponse(
+      err instanceof Error ? err.message : "File storage is unavailable.",
+      503
+    );
+  }
 
   let formData: FormData;
   try {
@@ -55,21 +67,30 @@ export async function POST(req: NextRequest) {
     return cfg;
   });
 
-  const template = await prisma.template.create({
-    data: {
-      name: name.trim(),
-      fileUrl: processed.storedFilename,
-      fileType: processed.fileType,
-      widthPx: processed.widthPx,
-      heightPx: processed.heightPx,
-      fields: defaultFields,
-      qrEnabled: true,
-      qrX: processed.widthPx - 170,
-      qrY: processed.heightPx - 170,
-      qrSize: 120,
-      createdById: admin.id
-    }
-  });
+  let template;
+  try {
+    template = await prisma.template.create({
+      data: {
+        name: name.trim(),
+        fileUrl: processed.storedFilename,
+        fileType: processed.fileType,
+        widthPx: processed.widthPx,
+        heightPx: processed.heightPx,
+        fields: defaultFields,
+        qrEnabled: true,
+        qrX: processed.widthPx - 170,
+        qrY: processed.heightPx - 170,
+        qrSize: 120,
+        createdById: admin.id
+      }
+    });
+  } catch (err) {
+    // The background is already uploaded at this point. Leaving it orphaned is
+    // the right trade: the admin gets a real error and can retry, which is
+    // better than a bodyless 500 that says nothing about what failed.
+    console.error("[templates/upload] could not save template row:", err);
+    return errorResponse("Could not save the template. Please try again.", 500);
+  }
 
   return NextResponse.json({ template }, { status: 201 });
 }
