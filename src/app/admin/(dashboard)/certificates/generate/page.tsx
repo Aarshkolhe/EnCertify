@@ -47,18 +47,42 @@ export default function GenerateCertificatesPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Kept separate from `error`: this one is about the page failing to populate,
+  // not about the form the admin is filling in.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [listsLoaded, setListsLoaded] = useState(false);
   const [summary, setSummary] = useState<GenerationSummary | null>(null);
 
   useEffect(() => {
+    // A failure here used to be invisible: `res.json()` on an error page throws,
+    // the rejection was never caught, and both lists stayed empty — so a broken
+    // request rendered as "No events yet" and sent you off to create an event
+    // that already exists. Surface what actually happened instead.
     async function load() {
-      const [eventsRes, templatesRes] = await Promise.all([
-        fetch("/api/admin/events"),
-        fetch("/api/admin/templates")
-      ]);
-      const eventsData = await eventsRes.json();
-      const templatesData = await templatesRes.json();
-      setEvents(eventsData.events || []);
-      setTemplates(templatesData.templates || []);
+      try {
+        const [eventsRes, templatesRes] = await Promise.all([
+          fetch("/api/admin/events"),
+          fetch("/api/admin/templates")
+        ]);
+
+        if (!eventsRes.ok) {
+          throw new Error(await readError(eventsRes, "Could not load events."));
+        }
+        if (!templatesRes.ok) {
+          throw new Error(await readError(templatesRes, "Could not load templates."));
+        }
+
+        const eventsData = await readJson<{ events?: EventOption[] }>(eventsRes);
+        const templatesData = await readJson<{ templates?: TemplateOption[] }>(templatesRes);
+        setEvents(eventsData?.events ?? []);
+        setTemplates(templatesData?.templates ?? []);
+      } catch (err) {
+        setLoadError(
+          err instanceof Error ? err.message : "Could not load events and templates."
+        );
+      } finally {
+        setListsLoaded(true);
+      }
     }
     load();
   }, []);
@@ -145,6 +169,12 @@ export default function GenerateCertificatesPage() {
     <div className="max-w-3xl">
       <h1 className="font-display text-2xl text-ink-900">Generate certificates</h1>
 
+      {loadError && (
+        <Alert tone="danger" className="mt-4">
+          {loadError}
+        </Alert>
+      )}
+
       {step === "setup" && (
         <Card className="mt-6">
           <form onSubmit={goToUpload} className="space-y-4">
@@ -164,7 +194,7 @@ export default function GenerateCertificatesPage() {
                   </option>
                 ))}
               </select>
-              {events.length === 0 && (
+              {listsLoaded && !loadError && events.length === 0 && (
                 <p className="mt-1 text-xs text-ink-400">No events yet — create one first.</p>
               )}
             </div>
@@ -184,7 +214,7 @@ export default function GenerateCertificatesPage() {
                   </option>
                 ))}
               </select>
-              {templates.length === 0 && (
+              {listsLoaded && !loadError && templates.length === 0 && (
                 <p className="mt-1 text-xs text-ink-400">No templates yet — create one first.</p>
               )}
             </div>

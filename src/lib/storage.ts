@@ -31,6 +31,60 @@ export const TMP_DIR = "tmp";
 let client: SupabaseClient | null = null;
 
 /**
+ * Reads SUPABASE_URL and fails with a message that says what to fix.
+ *
+ * `createClient` rejects a bad value with "Invalid supabaseUrl", which names
+ * neither the variable nor the shape it wanted. The three ways this is
+ * actually got wrong — the placeholder copied over unedited, the Postgres
+ * connection string pasted in by mistake, and a bare project ref with no
+ * scheme — are each worth calling out by name.
+ */
+function readStorageUrl(): string {
+  // Dashboard paste picks up stray whitespace and sometimes the surrounding
+  // quotes along with the value; neither is worth a failed deploy.
+  const raw = (process.env.SUPABASE_URL ?? "").trim().replace(/^["']|["']$/g, "");
+
+  if (!raw) {
+    throw new Error(
+      "File storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
+    );
+  }
+  if (raw.includes("[") || raw.includes("]")) {
+    throw new Error(
+      "SUPABASE_URL still contains the placeholder from .env.example. Replace it " +
+        "with your project URL from Supabase -> Project Settings -> API " +
+        "(https://<project-ref>.supabase.co)."
+    );
+  }
+  if (/^postgres(ql)?:\/\//i.test(raw)) {
+    throw new Error(
+      "SUPABASE_URL is set to a Postgres connection string. It needs the project " +
+        "URL instead — Supabase -> Project Settings -> API -> Project URL " +
+        "(https://<project-ref>.supabase.co). The connection string belongs in DATABASE_URL."
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(
+      `SUPABASE_URL is not a valid URL (got "${raw}"). It must include the scheme, ` +
+        "e.g. https://<project-ref>.supabase.co."
+    );
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(
+      `SUPABASE_URL must be an http(s) URL (got "${parsed.protocol}//"). ` +
+        "Use https://<project-ref>.supabase.co."
+    );
+  }
+
+  // Trailing slashes are harmless to a human and confusing to the client.
+  return raw.replace(/\/+$/, "");
+}
+
+/**
  * The service role key is required — the buckets are private and these calls
  * all run server-side in API routes that have already checked admin auth. The
  * anon key cannot read or write them, by design.
@@ -38,11 +92,12 @@ let client: SupabaseClient | null = null;
 function storageClient(): SupabaseClient {
   if (client) return client;
 
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
+  const url = readStorageUrl();
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim().replace(/^["']|["']$/g, "");
+  if (!key) {
     throw new Error(
-      "File storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
+      "SUPABASE_SERVICE_ROLE_KEY is not set. Copy the service_role key from " +
+        "Supabase -> Project Settings -> API. The bucket is private, so the anon key will not work."
     );
   }
 
