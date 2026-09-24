@@ -6,7 +6,8 @@ import {
   assertWithinSizeLimit,
   TMP_DIR,
   safeFilename,
-  putObject
+  putObject,
+  deleteStoredFile
 } from "@/lib/storage";
 import { parseWorkbookBuffer } from "@/lib/excelParser";
 
@@ -86,6 +87,20 @@ export async function POST(req: NextRequest) {
     uploadId,
     headers: parsed.headers,
     totalRows: parsed.rows.length,
-    previewRows: parsed.rows.slice(0, PREVIEW_ROW_COUNT)
+    previewRows: parsed.rows.slice(0, PREVIEW_ROW_COUNT),
+    rows: parsed.rows
   });
+}
+
+export async function DELETE(req: NextRequest) {
+  const { admin, error } = await requireAdmin();
+  if (!admin) return error;
+
+  const url = new URL(req.url);
+  const uploadId = url.searchParams.get("uploadId");
+  if (uploadId) {
+    await deleteStoredFile(TMP_DIR, uploadId).catch(() => {});
+  }
+
+  return NextResponse.json({ ok: true });
 }

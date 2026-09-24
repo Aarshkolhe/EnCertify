@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_CERTIFICATES_PER_BATCH } from "@/lib/constants";
 
 export const loginSchema = z.object({
   email: z.string().email(),
@@ -51,13 +52,40 @@ export const columnMappingSchema = z.object({
   participantEmail: z.string().optional()
 });
 
-export const generateRequestSchema = z.object({
-  uploadId: z.string().min(1),
-  eventId: z.string().min(1),
-  templateId: z.string().min(1),
-  issueDate: z.string().min(1),
-  mapping: columnMappingSchema
+export const participantRecordSchema = z.object({
+  participantName: z.string().trim().min(1, "Participant name is required."),
+  participantEmail: z
+    .string()
+    .trim()
+    .nullable()
+    .optional()
+    .transform((val) => (val ? val : null)),
+  sourceRow: z.number().int().positive()
 });
+
+export const generateRequestSchema = z
+  .object({
+    uploadId: z.string().min(1).optional(),
+    eventId: z.string().min(1),
+    templateId: z.string().min(1),
+    issueDate: z.string().min(1),
+    mapping: columnMappingSchema.optional(),
+    participants: z
+      .array(participantRecordSchema)
+      .min(1, "At least one participant is required.")
+      .max(
+        MAX_CERTIFICATES_PER_BATCH,
+        `Maximum ${MAX_CERTIFICATES_PER_BATCH} certificates can be generated per batch. Please split the Excel file into smaller batches.`
+      )
+      .optional()
+  })
+  .refine(
+    (data) => (data.uploadId && data.mapping) || (data.participants && data.participants.length > 0),
+    {
+      message: "Either uploadId with column mapping or a list of participants must be provided."
+    }
+  );
+
 
 export const studentSearchSchema = z.object({
   name: z.string().trim().min(2).max(120)

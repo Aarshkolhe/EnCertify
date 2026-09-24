@@ -13,7 +13,7 @@ import {
   putObjectFromFile,
   deleteStoredFile
 } from "@/lib/storage";
-import { parseWorkbookBuffer, buildParticipants, type ColumnMapping } from "@/lib/excelParser";
+import { parseWorkbookBuffer, buildParticipants, type ColumnMapping, type ParticipantRecord } from "@/lib/excelParser";
 import { generateBatchCertificateIds } from "@/lib/certId";
 import { renderCertificate } from "@/lib/certificateRenderer";
 import { loadImage, type Image } from "@napi-rs/canvas";
@@ -64,14 +64,17 @@ interface WorkerResult {
   sourceRow: number;
 }
 
+export interface RunGenerationBatchParams {
+  eventId: string;
+  templateId: string;
+  issueDate: string;
+  uploadId?: string;
+  mapping?: ColumnMapping;
+  participants?: ParticipantRecord[];
+}
+
 export async function runGenerationBatch(
-  params: {
-    uploadId: string;
-    eventId: string;
-    templateId: string;
-    issueDate: string;
-    mapping: ColumnMapping;
-  },
+  params: RunGenerationBatchParams,
   concurrency = DEFAULT_GENERATION_CONCURRENCY
 ): Promise<GenerationSummary> {
   const totalStart = performance.now();
@@ -85,15 +88,33 @@ export async function runGenerationBatch(
   const issueDateObj = new Date(params.issueDate);
   if (Number.isNaN(issueDateObj.getTime())) throw new Error("Invalid issue date.");
 
-  let buffer: Buffer;
-  try {
-    buffer = await getObject(TMP_DIR, params.uploadId);
-  } catch {
-    throw new Error("The uploaded file has expired or was not found. Please upload it again.");
-  }
+  let valid: ParticipantRecord[];
+  let generationErrors: { row: number; reason: string }[];
+  let totalRowCount: number;
 
-  const { headers, rows } = parseWorkbookBuffer(buffer);
-  const { valid, errors } = buildParticipants(headers, rows, params.mapping);
+  if (params.participants && params.participants.length > 0) {
+    valid = params.participants;
+    generationErrors = [];
+    totalRowCount = valid.length;
+  } else if (params.uploadId) {
+    let buffer: Buffer;
+    try {
+      buffer = await getObject(TMP_DIR, params.uploadId);
+    } catch {
+      throw new Error("The uploaded file has expired or was not found. Please upload it again.");
+    }
+
+    const { headers, rows } = parseWorkbookBuffer(buffer);
+    if (!params.mapping) {
+      throw new Error("Column mapping is required when uploadId is provided.");
+    }
+    const validated = buildParticipants(headers, rows, params.mapping);
+    valid = validated.valid;
+    generationErrors = [...validated.errors];
+    totalRowCount = rows.length;
+  } else {
+    throw new Error("Either valid participants or an uploadId with mapping must be provided.");
+  }
 
   if (valid.length === 0) {
     throw new Error("No valid participant rows were found after validation.");
@@ -119,7 +140,6 @@ export async function runGenerationBatch(
 
   let tempBatchDir: string | null = null;
   const successfulResults: WorkerResult[] = [];
-  const generationErrors: { row: number; reason: string }[] = [...errors];
   let dbInserted = false;
   let zipFilename: string | null = null;
 
@@ -298,7 +318,9 @@ export async function runGenerationBatch(
       }
     });
 
-    await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
+    if (params.uploadId && !params.participants) {
+      await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
+    }
 
     const totalDuration = performance.now() - totalStart;
     console.log(
@@ -307,7 +329,7 @@ export async function runGenerationBatch(
 
     return {
       batchId: batch.id,
-      totalRows: rows.length,
+      totalRows: totalRowCount,
       successCount,
       failedCount: generationErrors.length,
       errors: generationErrors,
@@ -360,7 +382,9 @@ export async function runGenerationBatch(
     }
 
     // Clean up temporary upload where appropriate
-    await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
+    if (params.uploadId && !params.participants) {
+      await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
+    }
 
     // Ensure batch is marked as FAILED - never left in PROCESSING
     try {
