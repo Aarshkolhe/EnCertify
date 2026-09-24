@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
+import { createCanvas, loadImage, GlobalFonts, type Image } from "@napi-rs/canvas";
 import QRCode from "qrcode";
 import { PDFDocument } from "pdf-lib";
 import { TEMPLATE_DIR, getObject } from "@/lib/storage";
@@ -78,6 +78,7 @@ export interface QrConfig {
 
 export interface RenderCertificateInput {
   templateFilename: string; // object name under the TEMPLATE_DIR prefix
+  background?: Image | null; // optional preloaded/decoded background to avoid re-downloading per participant
   widthPx: number;
   heightPx: number;
   fields: FieldConfig[];
@@ -109,8 +110,8 @@ function canvasFont(field: FieldConfig): string {
 export async function renderCertificate(input: RenderCertificateInput): Promise<Buffer> {
   if (!fontsRegistered) ensureFonts();
 
-  const backgroundBytes = await getObject(TEMPLATE_DIR, input.templateFilename);
-  const background = await loadImage(backgroundBytes);
+  const background =
+    input.background ?? (await loadImage(await getObject(TEMPLATE_DIR, input.templateFilename)));
 
   const canvas = createCanvas(input.widthPx, input.heightPx);
   const ctx = canvas.getContext("2d");

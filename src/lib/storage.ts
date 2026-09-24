@@ -1,6 +1,13 @@
 import path from "node:path";
+import fsp from "node:fs/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
+
+const STORAGE_ROOT = path.join(process.cwd(), "storage");
+
+export function isLocalStorageMode(): boolean {
+  return !process.env.SUPABASE_URL && process.env.NODE_ENV !== "production";
+}
 
 /**
  * All runtime file storage lives in a private Supabase Storage bucket.
@@ -114,7 +121,16 @@ let bucketReady: Promise<void> | null = null;
  * happens once per warm instance rather than on every upload. A failure
  * clears the memo so the next request retries instead of caching the error.
  */
-export function ensureStorageDirs(): Promise<void> {
+export async function ensureStorageDirs(): Promise<void> {
+  if (isLocalStorageMode()) {
+    await Promise.all(
+      [TEMPLATE_DIR, CERTIFICATE_DIR, ZIP_DIR, TMP_DIR].map((d) =>
+        fsp.mkdir(path.join(STORAGE_ROOT, d), { recursive: true })
+      )
+    );
+    return;
+  }
+
   if (!bucketReady) {
     bucketReady = (async () => {
       const { error } = await storageClient().storage.createBucket(STORAGE_BUCKET, {
@@ -160,6 +176,14 @@ export async function putObject(
   contentType: string
 ): Promise<void> {
   const key = objectKey(prefix, filename);
+
+  if (isLocalStorageMode()) {
+    const filePath = path.join(STORAGE_ROOT, key);
+    await fsp.mkdir(path.dirname(filePath), { recursive: true });
+    await fsp.writeFile(filePath, body);
+    return;
+  }
+
   const { error } = await storageClient()
     .storage.from(STORAGE_BUCKET)
     .upload(key, body, { contentType, upsert: true });
@@ -170,6 +194,16 @@ export async function putObject(
 /** Downloads a stored object. Throws if it is missing — callers map that to a 404. */
 export async function getObject(prefix: string, filename: string): Promise<Buffer> {
   const key = objectKey(prefix, filename);
+
+  if (isLocalStorageMode()) {
+    const filePath = path.join(STORAGE_ROOT, key);
+    try {
+      return await fsp.readFile(filePath);
+    } catch {
+      throw new Error(`Could not read ${key}: not found`);
+    }
+  }
+
   const { data, error } = await storageClient()
     .storage.from(STORAGE_BUCKET)
     .download(key);
@@ -199,6 +233,16 @@ export async function deleteStoredFile(
     key = objectKey(prefix, filename);
   } catch {
     return false;
+  }
+
+  if (isLocalStorageMode()) {
+    const filePath = path.join(STORAGE_ROOT, key);
+    try {
+      await fsp.unlink(filePath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   const { data, error } = await storageClient()

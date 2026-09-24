@@ -8,6 +8,10 @@ function formatDate(date: Date) {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(date);
 }
 
+// Time-based edge revalidation: caches public verification result at Vercel Edge for 60s.
+// Instant invalidation occurs via revalidatePath when an admin revokes or deletes a certificate.
+export const revalidate = 60;
+
 export default async function VerifyCertificatePage({
   params
 }: {

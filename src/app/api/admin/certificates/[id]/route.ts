@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireAdmin, errorResponse } from "@/lib/apiAuth";
 import { deleteCertificate } from "@/lib/adminDelete";
@@ -20,11 +21,13 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
 
   const existing = await prisma.certificate.findUnique({
     where: { id: params.id },
-    select: { id: true }
+    select: { id: true, certificateId: true }
   });
   if (!existing) return errorResponse("Certificate not found.", 404);
 
   const summary = await deleteCertificate(params.id);
+  revalidatePath(`/certificate/verify/${existing.certificateId}`);
+  revalidatePath(`/api/certificate/file/${existing.certificateId}`);
   return NextResponse.json({ ok: true, deleted: summary });
 }
 
@@ -47,7 +50,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const existing = await prisma.certificate.findUnique({
     where: { id: params.id },
-    select: { id: true }
+    select: { id: true, certificateId: true }
   });
   if (!existing) return errorResponse("Certificate not found.", 404);
 
@@ -57,5 +60,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     select: { id: true, certificateId: true, status: true }
   });
 
+  revalidatePath(`/certificate/verify/${certificate.certificateId}`);
+  revalidatePath(`/api/certificate/file/${certificate.certificateId}`);
   return NextResponse.json({ certificate });
 }

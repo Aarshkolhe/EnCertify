@@ -12,3 +12,6 @@ batch/*.xls
 batch/*.csv
 batch/fonts/*
 !batch/fonts/.gitkeep
+
+storage/
+

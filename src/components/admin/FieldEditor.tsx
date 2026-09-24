@@ -55,6 +55,7 @@ export function FieldEditor({ template }: { template: TemplateData }) {
   const [qrY, setQrY] = useState(template.qrY ?? template.heightPx - 170);
   const [qrSize, setQrSize] = useState(template.qrSize ?? 120);
   const [selectedKey, setSelectedKey] = useState<FieldKey | null>(fields[0]?.key ?? null);
+  const [backgroundMissing, setBackgroundMissing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -240,7 +241,22 @@ export function FieldEditor({ template }: { template: TemplateData }) {
             height={displayHeight}
             className="pointer-events-none absolute inset-0 h-full w-full object-contain"
             draggable={false}
+            onError={() => setBackgroundMissing(true)}
+            onLoad={() => setBackgroundMissing(false)}
           />
+
+          {/* Without this the editor just shows an empty box: the fields are
+              still there and still draggable, but positioning them against
+              nothing looks like the template failed to save. */}
+          {backgroundMissing && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+              <p className="max-w-sm text-center text-sm text-danger">
+                The template background could not be loaded, so field positions
+                below are being placed against an empty canvas. Re-upload the
+                template if this persists.
+              </p>
+            </div>
+          )}
 
           {fields.map((field) => (
             <div

@@ -20,7 +20,9 @@ export interface ZipEntry {
  */
 export function createZipBuffer(entries: ZipEntry[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    // Use compression level 6 instead of 9: PDFs are already internally compressed,
+    // so level 6 avoids burning excessive CPU cycles while producing an almost identical archive size.
+    const archive = archiver("zip", { zlib: { level: 6 } });
     const chunks: Buffer[] = [];
 
     archive.on("data", (chunk: Buffer) => chunks.push(chunk));
