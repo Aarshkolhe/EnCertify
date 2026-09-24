@@ -28,6 +28,15 @@ export interface GenerationSummary {
   failedCount: number;
   errors: { row: number; reason: string }[];
   downloadUrl: string;
+  timings?: {
+    totalDuration: number;
+    templateDuration: number;
+    idDuration: number;
+    renderDuration: number;
+    dbDuration: number;
+    zipCreationDuration: number;
+    zipUploadDuration: number;
+  };
 }
 
 /**
@@ -228,7 +237,8 @@ export async function runGenerationBatch(
     // --------------------------------------------------------------------------
     // Phase 8: Streaming ZIP Generation & Upload
     // --------------------------------------------------------------------------
-    const zipStart = performance.now();
+    let zipCreationDuration = 0;
+    let zipUploadDuration = 0;
     if (successfulResults.length > 0) {
       const generatedZipFilename = safeFilename("zip");
       const tempZipPath = path.join(tempBatchDir, "batch.zip");
@@ -238,11 +248,21 @@ export async function runGenerationBatch(
         arcName: r.arcName
       }));
 
+      const zipCreateStart = performance.now();
       await createZipArchive(zipEntries, tempZipPath);
-      await putObjectFromFile(ZIP_DIR, generatedZipFilename, tempZipPath, "application/zip");
+      zipCreationDuration = performance.now() - zipCreateStart;
+
+      const zipUploadStart = performance.now();
+      await putObjectFromFile(ZIP_DIR, generatedZipFilename, tempZipPath, "application/zip", {
+        batchId: batch.id
+      });
+      zipUploadDuration = performance.now() - zipUploadStart;
       zipFilename = generatedZipFilename;
+
+      // Clean up the temporary batch ZIP immediately after successful upload
+      await fsp.unlink(tempZipPath).catch(() => {});
     }
-    const zipDuration = performance.now() - zipStart;
+    const zipDuration = zipCreationDuration + zipUploadDuration;
 
     // --------------------------------------------------------------------------
     // Phase 9: Final Batch Update
@@ -264,7 +284,7 @@ export async function runGenerationBatch(
 
     const totalDuration = performance.now() - totalStart;
     console.log(
-      `[generation] Batch ${batch.id}: ${successCount}/${valid.length} certs generated in ${totalDuration.toFixed(0)}ms (template: ${templateDuration.toFixed(0)}ms, ids: ${idDuration.toFixed(0)}ms, render+upload: ${renderDuration.toFixed(0)}ms, db: ${dbDuration.toFixed(0)}ms, zip: ${zipDuration.toFixed(0)}ms)`
+      `[generation] Batch ${batch.id}: ${successCount}/${valid.length} certs generated in ${totalDuration.toFixed(0)}ms (template: ${templateDuration.toFixed(0)}ms, ids: ${idDuration.toFixed(0)}ms, render+upload: ${renderDuration.toFixed(0)}ms, db: ${dbDuration.toFixed(0)}ms, zip creation: ${zipCreationDuration.toFixed(0)}ms, zip upload: ${zipUploadDuration.toFixed(0)}ms)`
     );
 
     return {
@@ -273,7 +293,16 @@ export async function runGenerationBatch(
       successCount,
       failedCount: generationErrors.length,
       errors: generationErrors,
-      downloadUrl: zipFilename ? `/api/admin/certificates/download-zip/${batch.id}` : ""
+      downloadUrl: zipFilename ? `/api/admin/certificates/download-zip/${batch.id}` : "",
+      timings: {
+        totalDuration,
+        templateDuration,
+        idDuration,
+        renderDuration,
+        dbDuration,
+        zipCreationDuration,
+        zipUploadDuration
+      }
     };
   } catch (error: unknown) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error during batch generation";

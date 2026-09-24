@@ -3,6 +3,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
+import { Upload } from "tus-js-client";
 
 const STORAGE_ROOT = path.join(process.cwd(), "storage");
 
@@ -92,6 +93,39 @@ function readStorageUrl(): string {
   return raw.replace(/\/+$/, "");
 }
 
+function getServiceRoleKey(): string {
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim().replace(/^["']|["']$/g, "");
+  if (!key) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not set. Copy the service_role key from " +
+        "Supabase -> Project Settings -> API. The bucket is private, so the anon key will not work."
+    );
+  }
+  return key;
+}
+
+export function sanitizeError(msg: string): string {
+  return msg.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]");
+}
+
+/**
+ * Direct storage hostname for resumable TUS uploads.
+ * Supabase docs recommend using `https://<project-id>.storage.supabase.co`
+ * rather than the standard project URL for large file uploads.
+ */
+export function getResumableUploadEndpoint(): string {
+  if (process.env.SUPABASE_TUS_URL) {
+    return process.env.SUPABASE_TUS_URL;
+  }
+  const rawUrl = readStorageUrl();
+  const parsed = new URL(rawUrl);
+  if (parsed.hostname.endsWith(".supabase.co")) {
+    const projectId = parsed.hostname.replace(/\.supabase\.co$/, "");
+    return `https://${projectId}.storage.supabase.co/storage/v1/upload/resumable`;
+  }
+  return `${rawUrl}/storage/v1/upload/resumable`;
+}
+
 /**
  * The service role key is required — the buckets are private and these calls
  * all run server-side in API routes that have already checked admin auth. The
@@ -101,13 +135,7 @@ function storageClient(): SupabaseClient {
   if (client) return client;
 
   const url = readStorageUrl();
-  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim().replace(/^["']|["']$/g, "");
-  if (!key) {
-    throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY is not set. Copy the service_role key from " +
-        "Supabase -> Project Settings -> API. The bucket is private, so the anon key will not work."
-    );
-  }
+  const key = getServiceRoleKey();
 
   client = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false }
@@ -193,16 +221,137 @@ export async function putObject(
 }
 
 /**
+ * Uploads a large ZIP file directly from disk without holding it in memory.
+ * - In local mode, copies the file directly into local storage.
+ * - In Supabase mode, uses TUS resumable upload protocol streamed in 6MB chunks
+ *   directly to the direct storage hostname (https://<project-id>.storage.supabase.co).
+ * Never reads the full file into a Buffer.
+ */
+export async function uploadLargeZipFile(
+  filename: string,
+  sourceFilePath: string,
+  options?: { batchId?: string }
+): Promise<void> {
+  const key = objectKey(ZIP_DIR, filename);
+  const stat = await fsp.stat(sourceFilePath);
+  const batchId = options?.batchId ?? "unknown";
+
+  if (isLocalStorageMode()) {
+    const destPath = path.join(STORAGE_ROOT, key);
+    await fsp.mkdir(path.dirname(destPath), { recursive: true });
+
+    if (process.env.TEST_SIMULATE_ZIP_UPLOAD_FAILURE === "1") {
+      const simErr = new Error("Simulated storage failure during ZIP upload");
+      console.error("[storage] Large ZIP upload failed:", {
+        mechanism: "local-copy (simulated)",
+        zipSizeBytes: stat.size,
+        statusCode: 500,
+        supabaseError: simErr.message,
+        batchId
+      });
+      throw simErr;
+    }
+
+    await fsp.copyFile(sourceFilePath, destPath);
+    return;
+  }
+
+  if (process.env.TEST_SIMULATE_ZIP_UPLOAD_FAILURE === "1") {
+    const simErr = new Error("Simulated storage failure during ZIP upload");
+    console.error("[storage] Large ZIP upload failed:", {
+      mechanism: "tus-resumable (simulated)",
+      zipSizeBytes: stat.size,
+      statusCode: 500,
+      supabaseError: simErr.message,
+      batchId
+    });
+    throw simErr;
+  }
+
+  const endpoint = getResumableUploadEndpoint();
+  const serviceRoleKey = getServiceRoleKey();
+
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createReadStream(sourceFilePath);
+    const upload = new Upload(stream, {
+      endpoint,
+      retryDelays: [0, 1000, 3000, 5000],
+      headers: {
+        authorization: `Bearer ${serviceRoleKey}`,
+        "x-upsert": "true"
+      },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      metadata: {
+        bucketName: STORAGE_BUCKET,
+        objectName: key,
+        contentType: "application/zip",
+        cacheControl: "3600"
+      },
+      chunkSize: 6 * 1024 * 1024,
+      uploadSize: stat.size,
+      onError: (err: any) => {
+        let statusCode: number | string | undefined;
+        let supabaseMessage = err instanceof Error ? err.message : String(err);
+
+        if (err && typeof err === "object") {
+          const originalRes = err.originalResponse;
+          if (originalRes) {
+            try {
+              statusCode = originalRes.getStatus();
+              const body = originalRes.getBody();
+              if (body) {
+                try {
+                  const parsed = JSON.parse(body);
+                  supabaseMessage = parsed.message || parsed.error || body;
+                } catch {
+                  supabaseMessage = body;
+                }
+              }
+            } catch {}
+          }
+        }
+
+        const cleanMessage = sanitizeError(supabaseMessage);
+
+        console.error("[storage] Large ZIP upload failed:", {
+          mechanism: "tus-resumable",
+          zipSizeBytes: stat.size,
+          statusCode: statusCode ?? "N/A",
+          supabaseError: cleanMessage,
+          batchId
+        });
+
+        reject(
+          new Error(
+            `Could not store zip: ${cleanMessage}${statusCode ? ` (HTTP ${statusCode})` : ""}`
+          )
+        );
+      },
+      onSuccess: () => {
+        resolve();
+      }
+    });
+
+    upload.start();
+  });
+}
+
+/**
  * Stores a file from local disk under `prefix`, avoiding holding large file contents in RAM.
- * In local mode, copies the file directly on the filesystem.
- * In Supabase mode, streams the file from disk or falls back to reading buffer if stream upload fails.
+ * When storing ZIP archives, routes directly to `uploadLargeZipFile` (TUS resumable streaming).
  */
 export async function putObjectFromFile(
   prefix: string,
   filename: string,
   sourceFilePath: string,
-  contentType: string
+  contentType: string,
+  options?: { batchId?: string }
 ): Promise<void> {
+  if (prefix === ZIP_DIR) {
+    return uploadLargeZipFile(filename, sourceFilePath, options);
+  }
+
   const key = objectKey(prefix, filename);
 
   if (isLocalStorageMode()) {
@@ -226,15 +375,7 @@ export async function putObjectFromFile(
     } as any);
 
   if (error) {
-    try {
-      const buf = await fsp.readFile(sourceFilePath);
-      const retry = await storageClient()
-        .storage.from(STORAGE_BUCKET)
-        .upload(key, buf, { contentType, upsert: true });
-      if (retry.error) throw new Error(retry.error.message);
-    } catch {
-      throw new Error(`Could not store ${key}: ${error.message}`);
-    }
+    throw new Error(`Could not store ${key}: ${sanitizeError(error.message)}`);
   }
 }
 
