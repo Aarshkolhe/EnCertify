@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
 import { Upload } from "tus-js-client";
+import { getMaxZipSizeBytes } from "@/lib/constants";
 
 const STORAGE_ROOT = path.join(process.cwd(), "storage");
 
@@ -235,6 +236,15 @@ export async function uploadLargeZipFile(
   const key = objectKey(ZIP_DIR, filename);
   const stat = await fsp.stat(sourceFilePath);
   const batchId = options?.batchId ?? "unknown";
+
+  const maxZipBytes = getMaxZipSizeBytes();
+  if (stat.size > maxZipBytes) {
+    const sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
+    const limitMb = Math.round(maxZipBytes / (1024 * 1024));
+    throw new Error(
+      `This batch produced a ZIP (${sizeMb} MB) larger than the supported storage limit of ${limitMb} MB. Please generate a smaller batch.`
+    );
+  }
 
   if (isLocalStorageMode()) {
     const destPath = path.join(STORAGE_ROOT, key);

@@ -20,6 +20,7 @@ import { loadImage, type Image } from "@napi-rs/canvas";
 import { createZipArchive, safeArcFilename, type ZipFileEntry } from "@/lib/zip";
 import { formatCertificateDate } from "@/lib/dates";
 import type { FieldConfig } from "@/lib/fieldTypes";
+import { MAX_CERTIFICATES_PER_BATCH, getMaxZipSizeBytes } from "@/lib/constants";
 
 export interface GenerationSummary {
   batchId: string;
@@ -96,6 +97,12 @@ export async function runGenerationBatch(
 
   if (valid.length === 0) {
     throw new Error("No valid participant rows were found after validation.");
+  }
+
+  if (valid.length > MAX_CERTIFICATES_PER_BATCH) {
+    throw new Error(
+      `Maximum ${MAX_CERTIFICATES_PER_BATCH} certificates can be generated per batch. Please split the Excel file into smaller batches.`
+    );
   }
 
   const activeEvent = event;
@@ -251,6 +258,17 @@ export async function runGenerationBatch(
       const zipCreateStart = performance.now();
       await createZipArchive(zipEntries, tempZipPath);
       zipCreationDuration = performance.now() - zipCreateStart;
+
+      // Server-side ZIP size safety check using filesystem metadata (low-memory)
+      const zipStat = await fsp.stat(tempZipPath);
+      const maxZipBytes = getMaxZipSizeBytes();
+      if (zipStat.size > maxZipBytes) {
+        const sizeMb = (zipStat.size / (1024 * 1024)).toFixed(1);
+        const limitMb = Math.round(maxZipBytes / (1024 * 1024));
+        throw new Error(
+          `This batch produced a ZIP (${sizeMb} MB) larger than the supported storage limit of ${limitMb} MB. Please generate a smaller batch.`
+        );
+      }
 
       const zipUploadStart = performance.now();
       await putObjectFromFile(ZIP_DIR, generatedZipFilename, tempZipPath, "application/zip", {

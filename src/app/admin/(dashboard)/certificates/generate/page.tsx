@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Label } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
 import { readError, readJson } from "@/lib/fetchJson";
+import { MAX_CERTIFICATES_PER_BATCH, getBatchSplitBreakdown } from "@/lib/constants";
 
 interface EventOption {
   id: string;
@@ -128,6 +129,12 @@ export default function GenerateCertificatesPage() {
       setError("Map the Participant Name column before generating.");
       return;
     }
+    if (parseResult.totalRows > MAX_CERTIFICATES_PER_BATCH) {
+      setError(
+        `Batch limit: maximum ${MAX_CERTIFICATES_PER_BATCH} certificates at a time. Please split this Excel file into smaller batches.`
+      );
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -164,6 +171,7 @@ export default function GenerateCertificatesPage() {
 
   const nameColIndex = parseResult?.headers.indexOf(nameColumn) ?? -1;
   const emailColIndex = parseResult && emailColumn ? parseResult.headers.indexOf(emailColumn) : -1;
+  const isOverLimit = (parseResult?.totalRows ?? 0) > MAX_CERTIFICATES_PER_BATCH;
 
   return (
     <div className="max-w-3xl">
@@ -247,6 +255,9 @@ export default function GenerateCertificatesPage() {
                 className="block w-full text-sm text-ink-700"
                 required
               />
+              <p className="mt-1 text-xs text-ink-400">
+                Maximum {MAX_CERTIFICATES_PER_BATCH} certificates per batch (.xlsx or .xls)
+              </p>
             </div>
             {error && <Alert tone="danger">{error}</Alert>}
             <div className="flex gap-2">
@@ -264,8 +275,17 @@ export default function GenerateCertificatesPage() {
       {step === "mapping" && parseResult && (
         <div className="mt-6 space-y-6">
           <Card>
-            <p className="text-sm font-medium text-ink-900">Map Excel columns</p>
-            <p className="mt-1 text-sm text-ink-400">{parseResult.totalRows} rows found.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium text-ink-900">Map Excel columns</p>
+                <p className="mt-1 text-sm text-ink-400">
+                  {parseResult.totalRows} {parseResult.totalRows === 1 ? "row" : "rows"} found.
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-ink-600">
+                Limit: max {MAX_CERTIFICATES_PER_BATCH} / batch
+              </span>
+            </div>
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <Label>Participant Name column (required)</Label>
@@ -326,14 +346,38 @@ export default function GenerateCertificatesPage() {
             </div>
           </Card>
 
+          {isOverLimit && (
+            <Alert tone="danger">
+              <p className="font-medium">
+                Batch limit: maximum {MAX_CERTIFICATES_PER_BATCH} certificates at a time. Please split this Excel file into smaller batches.
+              </p>
+              <p className="mt-1 text-xs">
+                This file contains {parseResult.totalRows} participants (maximum allowed: {MAX_CERTIFICATES_PER_BATCH}).
+                {" "}Recommended split: <span className="font-semibold">{getBatchSplitBreakdown(parseResult.totalRows)}</span> across {Math.ceil(parseResult.totalRows / MAX_CERTIFICATES_PER_BATCH)} batches.
+              </p>
+            </Alert>
+          )}
+
           {error && <Alert tone="danger">{error}</Alert>}
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => setStep("upload")}>
-              ← Back
-            </Button>
-            <Button onClick={handleGenerate} disabled={loading || !nameColumn}>
-              {loading ? "Generating…" : `Generate ${parseResult.totalRows} certificates`}
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={() => setStep("upload")}>
+                ← Back
+              </Button>
+              <Button
+                onClick={handleGenerate}
+                disabled={loading || !nameColumn || isOverLimit}
+              >
+                {loading
+                  ? "Generating…"
+                  : isOverLimit
+                    ? `Batch exceeds limit (max ${MAX_CERTIFICATES_PER_BATCH})`
+                    : `Generate ${parseResult.totalRows} certificates`}
+              </Button>
+            </div>
+            <span className="text-xs text-ink-400">
+              Maximum {MAX_CERTIFICATES_PER_BATCH} certificates per batch
+            </span>
           </div>
         </div>
       )}
