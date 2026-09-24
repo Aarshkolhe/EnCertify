@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+import fsp from "node:fs/promises";
 import { prisma } from "@/lib/db";
 import {
   CERTIFICATE_DIR,
@@ -7,13 +10,14 @@ import {
   safeFilename,
   getObject,
   putObject,
+  putObjectFromFile,
   deleteStoredFile
 } from "@/lib/storage";
 import { parseWorkbookBuffer, buildParticipants, type ColumnMapping } from "@/lib/excelParser";
 import { generateBatchCertificateIds } from "@/lib/certId";
 import { renderCertificate } from "@/lib/certificateRenderer";
 import { loadImage, type Image } from "@napi-rs/canvas";
-import { createZipBuffer, safeArcFilename, type ZipEntry } from "@/lib/zip";
+import { createZipArchive, safeArcFilename, type ZipFileEntry } from "@/lib/zip";
 import { formatCertificateDate } from "@/lib/dates";
 import type { FieldConfig } from "@/lib/fieldTypes";
 
@@ -45,7 +49,8 @@ interface WorkerResult {
     batchId: string;
   };
   storedFilename: string;
-  zipEntry: ZipEntry;
+  tempPdfPath: string;
+  arcName: string;
   sourceRow: number;
 }
 
@@ -96,131 +101,222 @@ export async function runGenerationBatch(
     }
   });
 
-  // --------------------------------------------------------------------------
-  // Phase 2: Template pre-download & decode (Downloaded & decoded ONCE per batch)
-  // --------------------------------------------------------------------------
-  const templateStart = performance.now();
-  let loadedBackground: Image;
-  try {
-    const backgroundBytes = await getObject(TEMPLATE_DIR, activeTemplate.fileUrl);
-    loadedBackground = await loadImage(backgroundBytes);
-  } catch (err) {
-    await prisma.generationBatch.update({
-      where: { id: batch.id },
-      data: {
-        status: "FAILED",
-        failedCount: valid.length,
-        errors: [{ row: 0, reason: `Template loading failed: ${err instanceof Error ? err.message : "Not found"}` }]
-      }
-    });
-    throw new Error(`Could not load template background: ${err instanceof Error ? err.message : "Not found"}`);
-  }
-  const templateDuration = performance.now() - templateStart;
-
-  // --------------------------------------------------------------------------
-  // Phase 3: Batch Certificate ID Pre-allocation (1 single DB check instead of N)
-  // --------------------------------------------------------------------------
-  const idStart = performance.now();
-  const certificateIds = await generateBatchCertificateIds(
-    issueDateObj.getFullYear(),
-    valid.length
-  );
-  const idDuration = performance.now() - idStart;
-
-  const fields = activeTemplate.fields as unknown as FieldConfig[];
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
-  // --------------------------------------------------------------------------
-  // Phase 4: Bounded Concurrent Rendering & Upload
-  // --------------------------------------------------------------------------
-  const renderStart = performance.now();
+  let tempBatchDir: string | null = null;
   const successfulResults: WorkerResult[] = [];
   const generationErrors: { row: number; reason: string }[] = [...errors];
+  let dbInserted = false;
+  let zipFilename: string | null = null;
 
-  let nextIndex = 0;
-  const workerCount = Math.min(concurrency, valid.length);
+  try {
+    // Scratch directory for streaming ZIP creation — keeps memory flat across the batch
+    tempBatchDir = await fsp.mkdtemp(path.join(os.tmpdir(), `encertify-batch-${batch.id}-`));
 
-  async function worker() {
-    while (nextIndex < valid.length) {
-      const idx = nextIndex++;
-      const participant = valid[idx];
-      const certificateId = certificateIds[idx];
+    // --------------------------------------------------------------------------
+    // Phase 2: Template pre-download & decode (Downloaded & decoded ONCE per batch)
+    // --------------------------------------------------------------------------
+    const templateStart = performance.now();
+    let loadedBackground: Image;
+    try {
+      const backgroundBytes = await getObject(TEMPLATE_DIR, activeTemplate.fileUrl);
+      loadedBackground = await loadImage(backgroundBytes);
+    } catch (err) {
+      throw new Error(`Could not load template background: ${err instanceof Error ? err.message : "Not found"}`);
+    }
+    const templateDuration = performance.now() - templateStart;
 
-      try {
-        const verifyUrl = `${appUrl}/certificate/verify/${certificateId}`;
+    // --------------------------------------------------------------------------
+    // Phase 3: Batch Certificate ID Pre-allocation (1 single DB check instead of N)
+    // --------------------------------------------------------------------------
+    const idStart = performance.now();
+    const certificateIds = await generateBatchCertificateIds(
+      issueDateObj.getFullYear(),
+      valid.length
+    );
+    const idDuration = performance.now() - idStart;
 
-        const pdfBuffer = await renderCertificate({
-          templateFilename: activeTemplate.fileUrl,
-          background: loadedBackground, // Reuses the already-decoded template in-memory
-          widthPx: activeTemplate.widthPx,
-          heightPx: activeTemplate.heightPx,
-          fields,
-          qr: {
-            enabled: activeTemplate.qrEnabled,
-            x: activeTemplate.qrX ?? activeTemplate.widthPx - 160,
-            y: activeTemplate.qrY ?? activeTemplate.heightPx - 160,
-            size: activeTemplate.qrSize ?? 120
-          },
-          verifyUrl,
-          values: {
-            participantName: participant.participantName,
-            certificateId,
-            eventName: activeEvent.name,
-            eventDate: formatCertificateDate(activeEvent.date),
-            issueDate: formatCertificateDate(issueDateObj)
-          }
-        });
+    const fields = activeTemplate.fields as unknown as FieldConfig[];
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-        const storedFilename = safeFilename("pdf");
-        await putObject(CERTIFICATE_DIR, storedFilename, pdfBuffer, "application/pdf");
+    // --------------------------------------------------------------------------
+    // Phase 4: Bounded Concurrent Rendering & Upload (No PDF buffer retention)
+    // --------------------------------------------------------------------------
+    const renderStart = performance.now();
+    let nextIndex = 0;
+    const workerCount = Math.min(concurrency, valid.length);
 
-        successfulResults.push({
-          record: {
-            certificateId,
-            participantName: participant.participantName,
-            participantNameNormalized: participant.participantName.trim().toLowerCase(),
-            participantEmail: participant.participantEmail,
-            eventId: activeEvent.id,
-            templateId: activeTemplate.id,
-            fileUrl: storedFilename,
-            issueDate: issueDateObj,
-            batchId: batch.id
-          },
-          storedFilename,
-          zipEntry: {
-            data: pdfBuffer,
-            arcName: safeArcFilename(participant.participantName, certificateId, "pdf")
-          },
-          sourceRow: participant.sourceRow
-        });
-      } catch (err) {
-        generationErrors.push({
-          row: participant.sourceRow,
-          reason: err instanceof Error ? err.message : "Certificate generation failed."
-        });
+    async function worker() {
+      while (nextIndex < valid.length) {
+        const idx = nextIndex++;
+        const participant = valid[idx];
+        const certificateId = certificateIds[idx];
+
+        try {
+          const verifyUrl = `${appUrl}/certificate/verify/${certificateId}`;
+
+          const pdfBuffer = await renderCertificate({
+            templateFilename: activeTemplate.fileUrl,
+            background: loadedBackground, // Reuses the already-decoded template in-memory
+            widthPx: activeTemplate.widthPx,
+            heightPx: activeTemplate.heightPx,
+            fields,
+            qr: {
+              enabled: activeTemplate.qrEnabled,
+              x: activeTemplate.qrX ?? activeTemplate.widthPx - 160,
+              y: activeTemplate.qrY ?? activeTemplate.heightPx - 160,
+              size: activeTemplate.qrSize ?? 120
+            },
+            verifyUrl,
+            values: {
+              participantName: participant.participantName,
+              certificateId,
+              eventName: activeEvent.name,
+              eventDate: formatCertificateDate(activeEvent.date),
+              issueDate: formatCertificateDate(issueDateObj)
+            }
+          });
+
+          const storedFilename = safeFilename("pdf");
+          await putObject(CERTIFICATE_DIR, storedFilename, pdfBuffer, "application/pdf");
+
+          // Write PDF to disk temp folder so it can be streamed into the ZIP without RAM retention
+          const tempPdfPath = path.join(tempBatchDir!, `${certificateId}.pdf`);
+          await fsp.writeFile(tempPdfPath, pdfBuffer);
+
+          // Crucial: we do NOT keep pdfBuffer in successfulResults.
+          // It is immediately garbage collected once this worker iteration ends.
+          successfulResults.push({
+            record: {
+              certificateId,
+              participantName: participant.participantName,
+              participantNameNormalized: participant.participantName.trim().toLowerCase(),
+              participantEmail: participant.participantEmail,
+              eventId: activeEvent.id,
+              templateId: activeTemplate.id,
+              fileUrl: storedFilename,
+              issueDate: issueDateObj,
+              batchId: batch.id
+            },
+            storedFilename,
+            tempPdfPath,
+            arcName: safeArcFilename(participant.participantName, certificateId, "pdf"),
+            sourceRow: participant.sourceRow
+          });
+        } catch (err) {
+          generationErrors.push({
+            row: participant.sourceRow,
+            reason: err instanceof Error ? err.message : "Certificate generation failed."
+          });
+        }
       }
     }
-  }
 
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  const renderDuration = performance.now() - renderStart;
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    const renderDuration = performance.now() - renderStart;
 
-  // --------------------------------------------------------------------------
-  // Phase 5 & 6: Bulk Database Insertion & Failure Cleanup
-  // --------------------------------------------------------------------------
-  const dbStart = performance.now();
-  if (successfulResults.length > 0) {
-    try {
+    // --------------------------------------------------------------------------
+    // Phase 5 & 6: Bulk Database Insertion
+    // --------------------------------------------------------------------------
+    const dbStart = performance.now();
+    if (successfulResults.length > 0) {
       await prisma.certificate.createMany({
         data: successfulResults.map((r) => r.record)
       });
-    } catch (dbErr) {
-      console.error("[generation] DB bulk insert failed, cleaning up uploaded files:", dbErr);
-      // Clean up orphaned PDF files uploaded during this batch attempt
+      dbInserted = true;
+    }
+    const dbDuration = performance.now() - dbStart;
+
+    // --------------------------------------------------------------------------
+    // Phase 8: Streaming ZIP Generation & Upload
+    // --------------------------------------------------------------------------
+    const zipStart = performance.now();
+    if (successfulResults.length > 0) {
+      const generatedZipFilename = safeFilename("zip");
+      const tempZipPath = path.join(tempBatchDir, "batch.zip");
+
+      const zipEntries: ZipFileEntry[] = successfulResults.map((r) => ({
+        filePath: r.tempPdfPath,
+        arcName: r.arcName
+      }));
+
+      await createZipArchive(zipEntries, tempZipPath);
+      await putObjectFromFile(ZIP_DIR, generatedZipFilename, tempZipPath, "application/zip");
+      zipFilename = generatedZipFilename;
+    }
+    const zipDuration = performance.now() - zipStart;
+
+    // --------------------------------------------------------------------------
+    // Phase 9: Final Batch Update
+    // --------------------------------------------------------------------------
+    const successCount = successfulResults.length;
+    const finalStatus = successCount > 0 ? "COMPLETED" : "FAILED";
+    await prisma.generationBatch.update({
+      where: { id: batch.id },
+      data: {
+        successCount,
+        failedCount: generationErrors.length,
+        errors: generationErrors,
+        zipUrl: zipFilename,
+        status: finalStatus
+      }
+    });
+
+    await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
+
+    const totalDuration = performance.now() - totalStart;
+    console.log(
+      `[generation] Batch ${batch.id}: ${successCount}/${valid.length} certs generated in ${totalDuration.toFixed(0)}ms (template: ${templateDuration.toFixed(0)}ms, ids: ${idDuration.toFixed(0)}ms, render+upload: ${renderDuration.toFixed(0)}ms, db: ${dbDuration.toFixed(0)}ms, zip: ${zipDuration.toFixed(0)}ms)`
+    );
+
+    return {
+      batchId: batch.id,
+      totalRows: rows.length,
+      successCount,
+      failedCount: generationErrors.length,
+      errors: generationErrors,
+      downloadUrl: zipFilename ? `/api/admin/certificates/download-zip/${batch.id}` : ""
+    };
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error during batch generation";
+    console.error(`[generation] Batch ${batch.id} failed:`, errorMsg);
+
+    // Rollback / cleanup database certificates if createMany had succeeded
+    if (dbInserted) {
+      try {
+        await prisma.certificate.deleteMany({
+          where: { batchId: batch.id }
+        });
+      } catch (dbCleanupErr) {
+        console.error(
+          `[generation] Failed to delete certificates for batch ${batch.id}:`,
+          dbCleanupErr instanceof Error ? dbCleanupErr.message : "Unknown error"
+        );
+      }
+    }
+
+    // Rollback / delete uploaded PDFs for this batch attempt
+    if (successfulResults.length > 0) {
       await Promise.allSettled(
         successfulResults.map((r) => deleteStoredFile(CERTIFICATE_DIR, r.storedFilename))
       );
+    }
 
+    // Rollback / delete uploaded ZIP if any
+    if (zipFilename) {
+      try {
+        await deleteStoredFile(ZIP_DIR, zipFilename);
+      } catch (zipCleanupErr) {
+        console.error(
+          `[generation] Failed to delete zip for batch ${batch.id}:`,
+          zipCleanupErr instanceof Error ? zipCleanupErr.message : "Unknown error"
+        );
+      }
+    }
+
+    // Clean up temporary upload where appropriate
+    await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
+
+    // Ensure batch is marked as FAILED - never left in PROCESSING
+    try {
       await prisma.generationBatch.update({
         where: { id: batch.id },
         data: {
@@ -228,60 +324,24 @@ export async function runGenerationBatch(
           failedCount: valid.length,
           errors: [
             ...generationErrors,
-            {
-              row: 0,
-              reason: `Database persistence failed: ${dbErr instanceof Error ? dbErr.message : "Unknown error"}`
-            }
+            { row: 0, reason: errorMsg }
           ]
         }
       });
-
-      throw new Error(
-        `Failed to save certificates to database: ${dbErr instanceof Error ? dbErr.message : "Unknown error"}`
+    } catch (batchUpdateErr) {
+      console.error(
+        `[generation] Critical: could not update batch ${batch.id} to FAILED:`,
+        batchUpdateErr instanceof Error ? batchUpdateErr.message : "Unknown error"
       );
     }
-  }
-  const dbDuration = performance.now() - dbStart;
 
-  // --------------------------------------------------------------------------
-  // Phase 8: ZIP Generation & Final Batch Update
-  // --------------------------------------------------------------------------
-  const zipStart = performance.now();
-  let zipUrl: string | null = null;
-  if (successfulResults.length > 0) {
-    const zipFilename = safeFilename("zip");
-    const zipEntries = successfulResults.map((r) => r.zipEntry);
-    const zipBuffer = await createZipBuffer(zipEntries);
-    await putObject(ZIP_DIR, zipFilename, zipBuffer, "application/zip");
-    zipUrl = zipFilename;
-  }
-  const zipDuration = performance.now() - zipStart;
-
-  const successCount = successfulResults.length;
-  await prisma.generationBatch.update({
-    where: { id: batch.id },
-    data: {
-      successCount,
-      failedCount: generationErrors.length,
-      errors: generationErrors,
-      zipUrl,
-      status: successCount > 0 ? "COMPLETED" : "FAILED"
+    throw error;
+  } finally {
+    // Always clean up temporary directory on disk
+    if (tempBatchDir) {
+      await fsp.rm(tempBatchDir, { recursive: true, force: true }).catch((rmErr) => {
+        console.error("[generation] Could not remove temp dir:", rmErr);
+      });
     }
-  });
-
-  await deleteStoredFile(TMP_DIR, params.uploadId).catch(() => {});
-
-  const totalDuration = performance.now() - totalStart;
-  console.log(
-    `[generation] Batch ${batch.id}: ${successCount}/${valid.length} certs generated in ${totalDuration.toFixed(0)}ms (template: ${templateDuration.toFixed(0)}ms, ids: ${idDuration.toFixed(0)}ms, render+upload: ${renderDuration.toFixed(0)}ms, db: ${dbDuration.toFixed(0)}ms, zip: ${zipDuration.toFixed(0)}ms)`
-  );
-
-  return {
-    batchId: batch.id,
-    totalRows: rows.length,
-    successCount,
-    failedCount: generationErrors.length,
-    errors: generationErrors,
-    downloadUrl: zipUrl ? `/api/admin/certificates/download-zip/${batch.id}` : ""
-  };
+  }
 }

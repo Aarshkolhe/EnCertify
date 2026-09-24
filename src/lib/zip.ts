@@ -1,7 +1,13 @@
+import fs from "node:fs";
 import archiver from "archiver";
 
 export interface ZipEntry {
   data: Buffer;
+  arcName: string; // e.g. "Rahul_Sharma_CERT-2026-8F3K92.pdf"
+}
+
+export interface ZipFileEntry {
+  filePath: string;
   arcName: string; // e.g. "Rahul_Sharma_CERT-2026-8F3K92.pdf"
 }
 
@@ -33,6 +39,41 @@ export function createZipBuffer(entries: ZipEntry[]): Promise<Buffer> {
       archive.append(entry.data, { name: entry.arcName });
     }
     archive.finalize().catch(reject);
+  });
+}
+
+/**
+ * Streams files from disk directly into a ZIP archive on disk.
+ * Avoids holding batch PDFs or archive chunks in memory.
+ */
+export function createZipArchive(
+  entries: ZipFileEntry[],
+  outputPath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(outputPath);
+    const archive = archiver("zip", { zlib: { level: 6 } });
+
+    output.on("close", () => resolve());
+    output.on("error", (err) => {
+      archive.destroy();
+      reject(err);
+    });
+    archive.on("error", (err) => {
+      output.destroy();
+      reject(err);
+    });
+
+    archive.pipe(output);
+
+    for (const entry of entries) {
+      archive.file(entry.filePath, { name: entry.arcName });
+    }
+
+    archive.finalize().catch((err) => {
+      output.destroy();
+      reject(err);
+    });
   });
 }
 

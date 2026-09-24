@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
@@ -189,6 +190,52 @@ export async function putObject(
     .upload(key, body, { contentType, upsert: true });
 
   if (error) throw new Error(`Could not store ${key}: ${error.message}`);
+}
+
+/**
+ * Stores a file from local disk under `prefix`, avoiding holding large file contents in RAM.
+ * In local mode, copies the file directly on the filesystem.
+ * In Supabase mode, streams the file from disk or falls back to reading buffer if stream upload fails.
+ */
+export async function putObjectFromFile(
+  prefix: string,
+  filename: string,
+  sourceFilePath: string,
+  contentType: string
+): Promise<void> {
+  const key = objectKey(prefix, filename);
+
+  if (isLocalStorageMode()) {
+    const destPath = path.join(STORAGE_ROOT, key);
+    await fsp.mkdir(path.dirname(destPath), { recursive: true });
+    await fsp.copyFile(sourceFilePath, destPath);
+    return;
+  }
+
+  const stat = await fsp.stat(sourceFilePath);
+  const stream = fs.createReadStream(sourceFilePath);
+  const { error } = await storageClient()
+    .storage.from(STORAGE_BUCKET)
+    .upload(key, stream, {
+      contentType,
+      upsert: true,
+      duplex: "half",
+      headers: {
+        "content-length": String(stat.size)
+      }
+    } as any);
+
+  if (error) {
+    try {
+      const buf = await fsp.readFile(sourceFilePath);
+      const retry = await storageClient()
+        .storage.from(STORAGE_BUCKET)
+        .upload(key, buf, { contentType, upsert: true });
+      if (retry.error) throw new Error(retry.error.message);
+    } catch {
+      throw new Error(`Could not store ${key}: ${error.message}`);
+    }
+  }
 }
 
 /** Downloads a stored object. Throws if it is missing — callers map that to a 404. */
