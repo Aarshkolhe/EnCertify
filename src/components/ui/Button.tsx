@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import type { ButtonHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   // `inverse` / `outline` are the two that read correctly on a dark (ink-900)
@@ -9,14 +9,18 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: "sm" | "md";
 }
 
-export function Button({
-  variant = "primary",
-  size = "md",
-  className,
-  ...props
-}: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    variant = "primary",
+    size = "md",
+    className,
+    ...props
+  },
+  ref
+) {
   return (
     <button
+      ref={ref}
       className={clsx(
         "inline-flex items-center justify-center gap-2 rounded font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         size === "md" ? "px-4 py-2 text-sm" : "px-3 py-1.5 text-xs",
@@ -33,4 +37,4 @@ export function Button({
       {...props}
     />
   );
-}
+});

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
 import { LogoTile } from "@/components/Logo";
 
@@ -90,8 +91,75 @@ export function AdminNav({
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  const modalRef = useRef<HTMLDivElement>(null);
+  const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const triggerBtnRef = useRef<HTMLButtonElement>(null);
 
   const isSuperAdmin = adminRole === "SUPER_ADMIN";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Trap focus, handle Escape key, and prevent background scroll while modal is open
+  useEffect(() => {
+    if (!confirmSignOut) return;
+
+    const previousActiveElement = document.activeElement as HTMLElement | null;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    // Auto-focus cancel button on modal open
+    const focusTimeout = setTimeout(() => {
+      cancelBtnRef.current?.focus();
+    }, 50);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !signingOut) {
+        e.preventDefault();
+        setConfirmSignOut(false);
+        return;
+      }
+
+      if (e.key === "Tab" && modalRef.current) {
+        const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        const focusable = Array.from(focusableElements);
+        if (focusable.length === 0) return;
+
+        const firstElement = focusable[0];
+        const lastElement = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === firstElement || !modalRef.current.contains(document.activeElement)) {
+            e.preventDefault();
+            lastElement.focus();
+          }
+        } else {
+          if (document.activeElement === lastElement || !modalRef.current.contains(document.activeElement)) {
+            e.preventDefault();
+            firstElement.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      clearTimeout(focusTimeout);
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+      if (previousActiveElement && typeof previousActiveElement.focus === "function") {
+        previousActiveElement.focus();
+      } else {
+        triggerBtnRef.current?.focus();
+      }
+    };
+  }, [confirmSignOut, signingOut]);
 
   useEffect(() => {
     if (!isSuperAdmin) return;
@@ -254,6 +322,7 @@ export function AdminNav({
           </span>
         </div>
         <Button
+          ref={triggerBtnRef}
           variant="secondary"
           size="sm"
           onClick={() => setConfirmSignOut(true)}
@@ -263,15 +332,34 @@ export function AdminNav({
         </Button>
       </div>
 
-      {confirmSignOut && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-xl border border-border bg-white p-5 shadow-2xl">
-            <h3 className="font-display text-base font-semibold text-ink-900">Sign Out</h3>
+      {mounted && confirmSignOut && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="signout-modal-title"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-ink-900/60 p-4 backdrop-blur-sm"
+          onClick={(e) => {
+            // Dismiss only when directly clicking the backdrop outside modal content
+            if (e.target === e.currentTarget && !signingOut) {
+              setConfirmSignOut(false);
+            }
+          }}
+        >
+          <div
+            ref={modalRef}
+            className="w-full max-w-sm rounded-xl border border-border bg-white p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h3 id="signout-modal-title" className="font-display text-base font-semibold text-ink-900">
+              Sign Out
+            </h3>
             <p className="mt-2 text-xs text-ink-500">
               Are you sure you want to sign out of your administrator account?
             </p>
             <div className="mt-5 flex items-center justify-end gap-2">
               <Button
+                ref={cancelBtnRef}
                 variant="secondary"
                 size="sm"
                 onClick={() => setConfirmSignOut(false)}
@@ -289,7 +377,8 @@ export function AdminNav({
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </aside>
   );
