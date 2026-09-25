@@ -7,8 +7,9 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   const PUBLIC_ADMIN_PATHS = ["/admin/login", "/admin/request-access", "/admin/activate"];
+  const normalizedPathname = pathname.replace(/\/$/, "");
 
-  if (PUBLIC_ADMIN_PATHS.includes(pathname)) {
+  if (PUBLIC_ADMIN_PATHS.includes(normalizedPathname)) {
     return NextResponse.next();
   }
 

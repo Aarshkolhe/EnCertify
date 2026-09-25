@@ -11,32 +11,38 @@ export async function GET(req: NextRequest) {
   }
 
   const tokenHash = hashActivationToken(token);
-  const tokenRecord = await prisma.adminActivationToken.findUnique({
-    where: { tokenHash },
-    include: { admin: true }
-  });
 
-  if (!tokenRecord) {
-    return errorResponse("Invalid or unknown activation link.", 404);
+  try {
+    const tokenRecord = await prisma.adminActivationToken.findUnique({
+      where: { tokenHash },
+      include: { admin: true }
+    });
+
+    if (!tokenRecord) {
+      return errorResponse("Invalid or unknown activation link.", 404);
+    }
+
+    if (tokenRecord.usedAt) {
+      return errorResponse("This activation link has already been used.", 410);
+    }
+
+    if (tokenRecord.expiresAt < new Date()) {
+      return errorResponse("This activation link has expired. Please ask a Super Admin to re-invite you.", 410);
+    }
+
+    if (tokenRecord.admin.status !== "INVITED") {
+      return errorResponse("This admin account is not awaiting activation.", 400);
+    }
+
+    return NextResponse.json({
+      valid: true,
+      email: tokenRecord.admin.email,
+      name: tokenRecord.admin.name
+    });
+  } catch (err) {
+    console.error("[auth/activate] Failed to verify activation token:", err);
+    return errorResponse("Unable to verify activation link. Please try again later.", 500);
   }
-
-  if (tokenRecord.usedAt) {
-    return errorResponse("This activation link has already been used.", 410);
-  }
-
-  if (tokenRecord.expiresAt < new Date()) {
-    return errorResponse("This activation link has expired. Please ask a Super Admin to re-invite you.", 410);
-  }
-
-  if (tokenRecord.admin.status !== "INVITED") {
-    return errorResponse("This admin account is not awaiting activation.", 400);
-  }
-
-  return NextResponse.json({
-    valid: true,
-    email: tokenRecord.admin.email,
-    name: tokenRecord.admin.name
-  });
 }
 
 export async function POST(req: NextRequest) {

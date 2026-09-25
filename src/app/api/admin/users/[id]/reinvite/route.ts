@@ -62,8 +62,8 @@ export async function POST(
     });
 
     const origin =
-      process.env.NEXT_PUBLIC_APP_URL ||
       req.nextUrl.origin ||
+      process.env.NEXT_PUBLIC_APP_URL ||
       "http://localhost:3000";
     const activationUrl = `${origin.replace(/\/$/, "")}/admin/activate?token=${rawToken}`;
 
