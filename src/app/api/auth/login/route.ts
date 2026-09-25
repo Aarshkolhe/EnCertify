@@ -60,6 +60,10 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        if (found.status === "REMOVED") {
+          return errorResponse("Invalid email or password.", 401);
+        }
+
         if (found.status !== "ACTIVE") {
           return errorResponse("Invalid email or password.", 401);
         }
@@ -91,7 +95,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const token = await signAdminSession({ sub: admin.id, email: admin.email });
+    const token = await signAdminSession({
+      sub: admin.id,
+      email: admin.email,
+      version: admin.sessionVersion
+    });
 
     const response = NextResponse.json({
       admin: {

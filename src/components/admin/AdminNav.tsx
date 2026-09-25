@@ -69,6 +69,12 @@ const ICONS = {
       <circle cx="9" cy="7" r="4" />
       <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
     </Icon>
+  ),
+  account: (
+    <Icon>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M6 21v-2a6 6 0 0 1 12 0v2" />
+    </Icon>
   )
 };
 
@@ -82,6 +88,8 @@ export function AdminNav({
   const pathname = usePathname();
   const router = useRouter();
   const [pendingCount, setPendingCount] = useState<number>(0);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   const isSuperAdmin = adminRole === "SUPER_ADMIN";
 
@@ -111,9 +119,15 @@ export function AdminNav({
   }, [isSuperAdmin]);
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/admin/login");
-    router.refresh();
+    setSigningOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setSigningOut(false);
+      setConfirmSignOut(false);
+      router.push("/admin/login");
+      router.refresh();
+    }
   }
 
   const initial = adminName.trim().charAt(0).toUpperCase() || "A";
@@ -156,6 +170,13 @@ export function AdminNav({
       ]
     });
   }
+
+  groups.push({
+    label: "Account",
+    links: [
+      { href: "/admin/account", label: "My Account", icon: ICONS.account }
+    ]
+  });
 
   return (
     <aside className="admin-rail sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-border px-4 py-6">
@@ -235,12 +256,41 @@ export function AdminNav({
         <Button
           variant="secondary"
           size="sm"
-          onClick={handleLogout}
+          onClick={() => setConfirmSignOut(true)}
           className="mt-3 w-full justify-center"
         >
           Sign out
         </Button>
       </div>
+
+      {confirmSignOut && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-white p-5 shadow-2xl">
+            <h3 className="font-display text-base font-semibold text-ink-900">Sign Out</h3>
+            <p className="mt-2 text-xs text-ink-500">
+              Are you sure you want to sign out of your administrator account?
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setConfirmSignOut(false)}
+                disabled={signingOut}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleLogout}
+                disabled={signingOut}
+              >
+                {signingOut ? "Signing out…" : "Sign out"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

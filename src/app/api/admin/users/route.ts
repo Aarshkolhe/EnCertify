@@ -1,13 +1,25 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireSuperAdmin, errorResponse } from "@/lib/apiAuth";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const auth = await requireSuperAdmin();
   if (auth.error) return auth.error;
 
+  const statusParam = req.nextUrl.searchParams.get("status");
+
+  let whereClause: any = { status: { not: "REMOVED" } };
+  if (statusParam === "REMOVED") {
+    whereClause = { status: "REMOVED" };
+  } else if (statusParam === "ALL") {
+    whereClause = {};
+  } else if (statusParam && ["ACTIVE", "SUSPENDED", "INVITED"].includes(statusParam)) {
+    whereClause = { status: statusParam };
+  }
+
   try {
     const admins = await prisma.admin.findMany({
+      where: whereClause,
       select: {
         id: true,
         email: true,

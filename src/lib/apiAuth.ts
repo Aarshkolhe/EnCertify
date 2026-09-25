@@ -1,6 +1,42 @@
 import { NextResponse } from "next/server";
 import { getSessionAdmin } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import type { Admin } from "@prisma/client";
+
+export class LastSuperAdminError extends Error {
+  constructor(message = "Cannot modify or remove the last remaining active Super Admin.") {
+    super(message);
+    this.name = "LastSuperAdminError";
+  }
+}
+
+/**
+ * Throws LastSuperAdminError if adminId belongs to a SUPER_ADMIN and
+ * fewer than 2 SUPER_ADMINs currently have status ACTIVE.
+ */
+export async function assertNotLastSuperAdmin(adminId: string): Promise<void> {
+  const target = await prisma.admin.findUnique({
+    where: { id: adminId },
+    select: { role: true, status: true }
+  });
+
+  if (!target || target.role !== "SUPER_ADMIN" || target.status !== "ACTIVE") {
+    return;
+  }
+
+  const activeSuperAdmins = await prisma.admin.count({
+    where: {
+      role: "SUPER_ADMIN",
+      status: "ACTIVE"
+    }
+  });
+
+  if (activeSuperAdmins < 2) {
+    throw new LastSuperAdminError(
+      "Cannot modify or remove the last remaining active Super Admin."
+    );
+  }
+}
 
 /**
  * Every admin API route must call this first and bail out on `null`.

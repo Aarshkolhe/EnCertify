@@ -13,7 +13,7 @@ interface AdminUser {
   name: string;
   email: string;
   role: "SUPER_ADMIN" | "ADMIN";
-  status: "INVITED" | "ACTIVE" | "SUSPENDED";
+  status: "INVITED" | "ACTIVE" | "SUSPENDED" | "REMOVED";
   createdAt: string;
   updatedAt: string;
   _count?: {
@@ -66,6 +66,7 @@ export function AccessRequestsManager({
 
   // Admins state
   const [admins, setAdmins] = useState<AdminUser[]>([]);
+  const [adminViewFilter, setAdminViewFilter] = useState<"ACTIVE" | "REMOVED">("ACTIVE");
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [adminsError, setAdminsError] = useState<string | null>(null);
 
@@ -86,7 +87,7 @@ export function AccessRequestsManager({
 
   // Admin status / role modal state
   const [actionModal, setActionModal] = useState<{
-    type: "suspend" | "reactivate" | "promote" | "demote";
+    type: "suspend" | "reactivate" | "promote" | "demote" | "remove";
     admin: AdminUser;
   } | null>(null);
 
@@ -111,7 +112,11 @@ export function AccessRequestsManager({
     setAdminsLoading(true);
     setAdminsError(null);
     try {
-      const res = await fetch("/api/admin/users");
+      const url =
+        adminViewFilter === "REMOVED"
+          ? "/api/admin/users?status=REMOVED"
+          : "/api/admin/users";
+      const res = await fetch(url);
       if (!res.ok) throw new Error(await readError(res, "Failed to load admins."));
       const data = await res.json();
       setAdmins(data.admins || []);
@@ -120,7 +125,7 @@ export function AccessRequestsManager({
     } finally {
       setAdminsLoading(false);
     }
-  }, []);
+  }, [adminViewFilter]);
 
   // Load audit logs
   const loadLogs = useCallback(async () => {
@@ -199,7 +204,11 @@ export function AccessRequestsManager({
 
     try {
       let res: Response;
-      if (type === "suspend" || type === "reactivate") {
+      if (type === "remove") {
+        res = await fetch(`/api/admin/users/${admin.id}/remove`, {
+          method: "POST"
+        });
+      } else if (type === "suspend" || type === "reactivate") {
         const nextStatus = type === "suspend" ? "SUSPENDED" : "ACTIVE";
         res = await fetch(`/api/admin/users/${admin.id}/status`, {
           method: "POST",
@@ -438,7 +447,30 @@ export function AccessRequestsManager({
       {/* TAB 2: ACTIVE ADMINS */}
       {activeTab === "admins" && (
         <div className="mt-6 space-y-4">
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setAdminViewFilter("ACTIVE")}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  adminViewFilter === "ACTIVE"
+                    ? "bg-seal/15 text-seal-dark font-semibold"
+                    : "bg-paper text-ink-500 hover:text-ink-900"
+                }`}
+              >
+                Active &amp; Invited
+              </button>
+              <button
+                onClick={() => setAdminViewFilter("REMOVED")}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  adminViewFilter === "REMOVED"
+                    ? "bg-seal/15 text-seal-dark font-semibold"
+                    : "bg-paper text-ink-500 hover:text-ink-900"
+                }`}
+              >
+                Removed (History)
+              </button>
+            </div>
+
             <Button
               variant="secondary"
               size="sm"
@@ -455,6 +487,14 @@ export function AccessRequestsManager({
             <Card>
               <div className="py-8 text-center text-sm text-ink-500">Loading administrators…</div>
             </Card>
+          ) : admins.length === 0 ? (
+            <Card>
+              <p className="text-sm text-ink-400">
+                {adminViewFilter === "REMOVED"
+                  ? "No removed administrators found."
+                  : "No administrators found."}
+              </p>
+            </Card>
           ) : (
             <div className="space-y-3">
               {admins.map((admin) => {
@@ -463,6 +503,12 @@ export function AccessRequestsManager({
                 const isSuspended = admin.status === "SUSPENDED";
                 const isInvited = admin.status === "INVITED";
                 const isActive = admin.status === "ACTIVE";
+                const isRemoved = admin.status === "REMOVED";
+
+                const activeSuperAdminsCount = admins.filter(
+                  (a) => a.role === "SUPER_ADMIN" && a.status === "ACTIVE"
+                ).length;
+                const isLastSuperAdmin = isSuper && isActive && activeSuperAdminsCount <= 1;
 
                 return (
                   <Card key={admin.id}>
@@ -483,7 +529,7 @@ export function AccessRequestsManager({
                             tone={
                               isActive
                                 ? "success"
-                                : isSuspended
+                                : isSuspended || isRemoved
                                 ? "danger"
                                 : "neutral"
                             }
@@ -503,67 +549,95 @@ export function AccessRequestsManager({
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
-                        {isInvited && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleReinvite(admin)}
-                            disabled={actionLoading}
-                          >
-                            Get Activation Link
-                          </Button>
-                        )}
+                        {isRemoved ? (
+                          <span className="text-xs text-ink-400 italic">
+                            Account permanently removed
+                          </span>
+                        ) : (
+                          <>
+                            {isInvited && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleReinvite(admin)}
+                                disabled={actionLoading}
+                              >
+                                Get Activation Link
+                              </Button>
+                            )}
 
-                        {isActive && !isSelf && (
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={() => {
-                              setActionError(null);
-                              setActionModal({ type: "suspend", admin });
-                            }}
-                          >
-                            Suspend
-                          </Button>
-                        )}
+                            {isActive && !isSelf && (
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                disabled={isLastSuperAdmin}
+                                title={isLastSuperAdmin ? "Cannot suspend the only remaining active Super Admin." : undefined}
+                                onClick={() => {
+                                  setActionError(null);
+                                  setActionModal({ type: "suspend", admin });
+                                }}
+                              >
+                                Suspend
+                              </Button>
+                            )}
 
-                        {isSuspended && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              setActionError(null);
-                              setActionModal({ type: "reactivate", admin });
-                            }}
-                          >
-                            Reactivate
-                          </Button>
-                        )}
+                            {isSuspended && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  setActionError(null);
+                                  setActionModal({ type: "reactivate", admin });
+                                }}
+                              >
+                                Reactivate
+                              </Button>
+                            )}
 
-                        {!isSelf && isActive && (
-                          isSuper ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setActionError(null);
-                                setActionModal({ type: "demote", admin });
-                              }}
-                            >
-                              Demote to Admin
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => {
-                                setActionError(null);
-                                setActionModal({ type: "promote", admin });
-                              }}
-                            >
-                              Promote to Super Admin
-                            </Button>
-                          )
+                            {!isSelf && isActive && (
+                              isSuper ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={isLastSuperAdmin}
+                                  title={isLastSuperAdmin ? "Cannot demote the only remaining active Super Admin." : undefined}
+                                  onClick={() => {
+                                    setActionError(null);
+                                    setActionModal({ type: "demote", admin });
+                                  }}
+                                >
+                                  Demote to Admin
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => {
+                                    setActionError(null);
+                                    setActionModal({ type: "promote", admin });
+                                  }}
+                                >
+                                  Promote to Super Admin
+                                </Button>
+                              )
+                            )}
+
+                            {!isSelf && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-danger hover:bg-danger/10 hover:text-danger"
+                                disabled={isLastSuperAdmin}
+                                title={isLastSuperAdmin ? "Cannot remove the only remaining active Super Admin." : undefined}
+                                onClick={() => {
+                                  setActionError(null);
+                                  setActionModal({ type: "remove", admin });
+                                }}
+                              >
+                                Remove
+                              </Button>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -789,6 +863,7 @@ export function AccessRequestsManager({
               {actionModal.type === "reactivate" && "Reactivate Administrator"}
               {actionModal.type === "promote" && "Promote to Super Admin"}
               {actionModal.type === "demote" && "Demote to Admin"}
+              {actionModal.type === "remove" && "Permanently Remove Administrator"}
             </h2>
 
             <div className="mt-3 text-sm text-ink-600 space-y-2">
@@ -796,6 +871,15 @@ export function AccessRequestsManager({
                 Target administrator:{" "}
                 <strong className="text-ink-900">{actionModal.admin.name}</strong> ({actionModal.admin.email})
               </p>
+
+              {actionModal.type === "remove" && (
+                <div className="rounded border border-danger/30 bg-danger/5 p-3 text-xs text-danger">
+                  <p className="font-semibold">Permanent Action:</p>
+                  <p className="mt-0.5 leading-relaxed">
+                    Removing this administrator will soft-delete their account and immediately invalidate all of their active sessions. They will be permanently blocked from signing in again.
+                  </p>
+                </div>
+              )}
 
               {actionModal.type === "suspend" && (
                 <p className="text-xs text-danger">
@@ -833,11 +917,11 @@ export function AccessRequestsManager({
                 Cancel
               </Button>
               <Button
-                variant={actionModal.type === "suspend" ? "danger" : "primary"}
+                variant={actionModal.type === "suspend" || actionModal.type === "remove" ? "danger" : "primary"}
                 onClick={confirmAdminAction}
                 disabled={actionLoading}
               >
-                {actionLoading ? "Processing…" : "Confirm"}
+                {actionLoading ? "Processing…" : actionModal.type === "remove" ? "Remove Administrator" : "Confirm"}
               </Button>
             </div>
           </Card>

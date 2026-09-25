@@ -46,6 +46,7 @@ export function buildLocalAdmin(email: string): Admin {
     name: process.env.LOCAL_ADMIN_NAME ?? process.env.SEED_ADMIN_NAME ?? "Admin",
     role: "SUPER_ADMIN",
     status: "ACTIVE",
+    sessionVersion: 0,
     createdAt: now,
     updatedAt: now
   } as Admin;
@@ -74,10 +75,11 @@ function getSecretKey() {
 export interface AdminSessionPayload {
   sub: string; // admin id
   email: string;
+  version?: number;
 }
 
 export async function signAdminSession(payload: AdminSessionPayload): Promise<string> {
-  return new SignJWT({ email: payload.email })
+  return new SignJWT({ email: payload.email, version: payload.version ?? 0 })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.sub)
     .setIssuedAt()
@@ -91,7 +93,11 @@ export async function verifyAdminSession(
   try {
     const { payload } = await jwtVerify(token, getSecretKey());
     if (!payload.sub || typeof payload.email !== "string") return null;
-    return { sub: payload.sub, email: payload.email };
+    return {
+      sub: payload.sub,
+      email: payload.email,
+      version: typeof payload.version === "number" ? payload.version : 0
+    };
   } catch {
     return null;
   }
@@ -126,6 +132,7 @@ export async function getSessionAdmin() {
 
   const admin = await prisma.admin.findUnique({ where: { id: payload.sub } });
   if (!admin || admin.status !== "ACTIVE") return null;
+  if (admin.sessionVersion !== (payload.version ?? 0)) return null;
 
   return admin;
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireSuperAdmin, errorResponse } from "@/lib/apiAuth";
+import { requireSuperAdmin, errorResponse, assertNotLastSuperAdmin, LastSuperAdminError } from "@/lib/apiAuth";
 import { adminRoleUpdateSchema } from "@/lib/validators";
 
 export async function POST(
@@ -44,17 +44,14 @@ export async function POST(
     }
 
     // Safeguard 2: Cannot demote the last active SUPER_ADMIN
-    if (targetAdmin.role === "SUPER_ADMIN" && newRole === "ADMIN") {
-      const activeSuperAdminCount = await prisma.admin.count({
-        where: {
-          role: "SUPER_ADMIN",
-          status: "ACTIVE",
-          id: { not: targetId }
+    if (newRole === "ADMIN") {
+      try {
+        await assertNotLastSuperAdmin(targetId);
+      } catch (err) {
+        if (err instanceof LastSuperAdminError) {
+          return errorResponse(err.message, 400);
         }
-      });
-
-      if (activeSuperAdminCount === 0) {
-        return errorResponse("Cannot demote the only remaining active Super Admin.", 400);
+        throw err;
       }
     }
 

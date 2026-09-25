@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireSuperAdmin, errorResponse, assertNotLastSuperAdmin, LastSuperAdminError } from "@/lib/apiAuth";
-import { adminStatusUpdateSchema } from "@/lib/validators";
 
 export async function POST(
   req: NextRequest,
@@ -15,23 +14,12 @@ export async function POST(
     return errorResponse("Missing admin ID.", 400);
   }
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return errorResponse("Invalid request body.", 400);
-  }
-
-  const parsed = adminStatusUpdateSchema.safeParse(body);
-  if (!parsed.success) {
-    return errorResponse("Invalid status value. Must be ACTIVE or SUSPENDED.", 400);
-  }
-
-  const { status: newStatus } = parsed.data;
-
-  // Safeguard 1: Cannot suspend yourself
-  if (auth.admin.id === targetId && newStatus === "SUSPENDED") {
-    return errorResponse("You cannot suspend your own account.", 400);
+  // Reject if acting super admin's own id
+  if (auth.admin.id === targetId) {
+    return errorResponse(
+      "Cannot remove your own account through this endpoint. Please use the self-service account deletion page.",
+      400
+    );
   }
 
   try {
@@ -43,8 +31,16 @@ export async function POST(
       return errorResponse("Admin user not found.", 404);
     }
 
-    // Safeguard 2: Cannot suspend the last active SUPER_ADMIN
-    if (newStatus === "SUSPENDED") {
+    // Idempotent: if already REMOVED, return success
+    if (targetAdmin.status === "REMOVED") {
+      return NextResponse.json({
+        success: true,
+        message: "Admin account is already removed."
+      });
+    }
+
+    // If target is SUPER_ADMIN, assert not the last active one
+    if (targetAdmin.role === "SUPER_ADMIN") {
       try {
         await assertNotLastSuperAdmin(targetId);
       } catch (err) {
@@ -56,27 +52,22 @@ export async function POST(
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const updateData: any = { status: newStatus };
-      if (newStatus === "SUSPENDED") {
-        updateData.sessionVersion = { increment: 1 };
-      }
-
       const admin = await tx.admin.update({
         where: { id: targetId },
-        data: updateData,
+        data: {
+          status: "REMOVED",
+          sessionVersion: { increment: 1 }
+        },
         select: { id: true, email: true, name: true, role: true, status: true }
       });
-
-      const action = newStatus === "SUSPENDED" ? "ADMIN_SUSPENDED" : "ADMIN_REACTIVATED";
 
       await tx.adminAuditLog.create({
         data: {
           actorAdminId: auth.admin.id,
           targetAdminId: targetId,
-          action,
+          action: "ADMIN_REMOVED",
           metadata: {
             previousStatus: targetAdmin.status,
-            newStatus,
             targetEmail: targetAdmin.email
           }
         }
@@ -87,11 +78,11 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      message: `Admin status successfully updated to ${newStatus}.`,
+      message: "Administrator account successfully removed.",
       admin: updated
     });
   } catch (err) {
-    console.error("[admin/users/status] update failed:", err);
-    return errorResponse("Could not update admin status.", 500);
+    console.error("[admin/users/remove] remove failed:", err);
+    return errorResponse("Could not remove admin account.", 500);
   }
 }
