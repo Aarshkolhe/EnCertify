@@ -413,6 +413,29 @@ export async function getObject(prefix: string, filename: string): Promise<Buffe
 }
 
 /**
+ * Creates a short-lived signed download URL for a stored certificate file in private bucket.
+ * Returns null if running in local storage mode where Supabase object storage is not configured.
+ */
+export async function createCertificateSignedUrl(
+  filename: string,
+  expiresInSeconds = 60
+): Promise<string | null> {
+  if (isLocalStorageMode()) {
+    return null;
+  }
+  const key = objectKey(CERTIFICATE_DIR, filename);
+  const { data, error } = await storageClient()
+    .storage.from(STORAGE_BUCKET)
+    .createSignedUrl(key, expiresInSeconds);
+
+  if (error || !data?.signedUrl) {
+    throw new Error(`Could not generate signed URL: ${error?.message ?? "unknown error"}`);
+  }
+  return data.signedUrl;
+}
+
+
+/**
  * Deletes a stored file given the filename held on its DB row.
  *
  * A missing object is not an error — a record whose file has already been
