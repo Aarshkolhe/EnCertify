@@ -16,16 +16,30 @@ async function main() {
 
   const existing = await prisma.admin.findUnique({ where: { email } });
   if (existing) {
-    console.log(`Admin ${email} already exists. Skipping.`);
+    if (existing.role !== "SUPER_ADMIN" || existing.status !== "ACTIVE") {
+      await prisma.admin.update({
+        where: { id: existing.id },
+        data: { role: "SUPER_ADMIN", status: "ACTIVE" }
+      });
+      console.log(`Updated root admin ${email} to SUPER_ADMIN + ACTIVE.`);
+    } else {
+      console.log(`Root admin ${email} already exists as SUPER_ADMIN + ACTIVE.`);
+    }
     return;
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
   await prisma.admin.create({
-    data: { email, passwordHash, name }
+    data: {
+      email,
+      passwordHash,
+      name,
+      role: "SUPER_ADMIN",
+      status: "ACTIVE"
+    }
   });
 
-  console.log(`Created admin account for ${email}.`);
+  console.log(`Created root super admin account for ${email}.`);
 }
 
 main()

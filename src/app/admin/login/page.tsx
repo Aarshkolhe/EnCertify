@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -82,6 +83,13 @@ export default function AdminLoginPage() {
           <Button type="submit" disabled={loading} className="w-full">
             {loading ? "Signing in…" : "Sign in"}
           </Button>
+
+          <div className="pt-2 text-center text-xs text-ink-500">
+            Need admin access?{" "}
+            <Link href="/admin/request-access" className="font-medium text-seal hover:underline">
+              Request an account
+            </Link>
+          </div>
         </form>
       </Card>
     </main>

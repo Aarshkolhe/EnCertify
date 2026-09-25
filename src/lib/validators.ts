@@ -95,3 +95,36 @@ export const byEventSchema = z.object({
   name: z.string().trim().min(2).max(120),
   eventId: z.string().min(1)
 });
+
+export const accessRequestSchema = z.object({
+  fullName: z.string().trim().min(2, "Full name must be at least 2 characters.").max(100),
+  email: z.string().trim().email("Please provide a valid email address.").toLowerCase(),
+  department: z.string().trim().max(100).optional().nullable(),
+  organization: z.string().trim().max(100).optional().nullable(),
+  reason: z.string().trim().min(10, "Please provide a clear reason (at least 10 characters).").max(1000, "Reason cannot exceed 1000 characters."),
+  website: z.string().optional() // Honeypot field: must be empty
+});
+
+export const activationSchema = z
+  .object({
+    token: z.string().min(1, "Activation token is required."),
+    password: z.string().min(8, "Password must be at least 8 characters long."),
+    confirmPassword: z.string().min(8, "Please confirm your password.")
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"]
+  });
+
+export const adminStatusUpdateSchema = z.object({
+  status: z.enum(["ACTIVE", "SUSPENDED"])
+});
+
+export const adminRoleUpdateSchema = z.object({
+  role: z.enum(["SUPER_ADMIN", "ADMIN"])
+});
+
+export const rejectRequestSchema = z.object({
+  rejectionReason: z.string().trim().max(500).optional().nullable()
+});
+

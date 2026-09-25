@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
-import { createHash, timingSafeEqual } from "crypto";
+import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import type { Admin } from "@prisma/client";
@@ -44,7 +44,8 @@ export function buildLocalAdmin(email: string): Admin {
     email,
     passwordHash: "",
     name: process.env.LOCAL_ADMIN_NAME ?? process.env.SEED_ADMIN_NAME ?? "Admin",
-    role: "ADMIN",
+    role: "SUPER_ADMIN",
+    status: "ACTIVE",
     createdAt: now,
     updatedAt: now
   } as Admin;
@@ -124,9 +125,17 @@ export async function getSessionAdmin() {
   }
 
   const admin = await prisma.admin.findUnique({ where: { id: payload.sub } });
-  if (!admin) return null;
+  if (!admin || admin.status !== "ACTIVE") return null;
 
   return admin;
+}
+
+export function generateActivationToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
+export function hashActivationToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 export const SESSION_COOKIE_OPTIONS = {

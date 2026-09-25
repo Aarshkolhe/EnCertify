@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
-import type { ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { LogoTile } from "@/components/Logo";
 
@@ -62,37 +62,53 @@ const ICONS = {
       <path d="M5 4h11l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
       <path d="M15 4v5h5M8.5 14.5l2 2 4-4.5" />
     </Icon>
+  ),
+  users: (
+    <Icon>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </Icon>
   )
 };
 
-const GROUPS: Array<{
-  label: string | null;
-  links: Array<{ href: string; label: string; icon: ReactNode }>;
-}> = [
-  {
-    label: null,
-    links: [{ href: "/admin", label: "Dashboard", icon: ICONS.dashboard }]
-  },
-  {
-    label: "Set up",
-    links: [
-      { href: "/admin/events", label: "Events", icon: ICONS.events },
-      { href: "/admin/templates", label: "Templates", icon: ICONS.templates }
-    ]
-  },
-  {
-    label: "Certificates",
-    links: [
-      { href: "/admin/certificates/generate", label: "Generate", icon: ICONS.generate },
-      { href: "/admin/certificates/generated", label: "Batches", icon: ICONS.batches },
-      { href: "/admin/certificates/issued", label: "Issued", icon: ICONS.issued }
-    ]
-  }
-];
-
-export function AdminNav({ adminName }: { adminName: string }) {
+export function AdminNav({
+  adminName,
+  adminRole
+}: {
+  adminName: string;
+  adminRole?: string;
+}) {
   const pathname = usePathname();
   const router = useRouter();
+  const [pendingCount, setPendingCount] = useState<number>(0);
+
+  const isSuperAdmin = adminRole === "SUPER_ADMIN";
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+
+    let active = true;
+    async function fetchPendingCount() {
+      try {
+        const res = await fetch("/api/admin/access-requests/count");
+        if (res.ok && active) {
+          const data = await res.json();
+          setPendingCount(data.pendingCount || 0);
+        }
+      } catch {
+        // Silently ignore badge fetch errors
+      }
+    }
+
+    fetchPendingCount();
+    // Poll every 30 seconds for pending count
+    const interval = setInterval(fetchPendingCount, 30000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isSuperAdmin]);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -102,6 +118,45 @@ export function AdminNav({ adminName }: { adminName: string }) {
 
   const initial = adminName.trim().charAt(0).toUpperCase() || "A";
 
+  const groups: Array<{
+    label: string | null;
+    links: Array<{ href: string; label: string; icon: ReactNode; badge?: number }>;
+  }> = [
+    {
+      label: null,
+      links: [{ href: "/admin", label: "Dashboard", icon: ICONS.dashboard }]
+    },
+    {
+      label: "Set up",
+      links: [
+        { href: "/admin/events", label: "Events", icon: ICONS.events },
+        { href: "/admin/templates", label: "Templates", icon: ICONS.templates }
+      ]
+    },
+    {
+      label: "Certificates",
+      links: [
+        { href: "/admin/certificates/generate", label: "Generate", icon: ICONS.generate },
+        { href: "/admin/certificates/generated", label: "Batches", icon: ICONS.batches },
+        { href: "/admin/certificates/issued", label: "Issued", icon: ICONS.issued }
+      ]
+    }
+  ];
+
+  if (isSuperAdmin) {
+    groups.push({
+      label: "Management",
+      links: [
+        {
+          href: "/admin/access-requests",
+          label: "Admins & Requests",
+          icon: ICONS.users,
+          badge: pendingCount
+        }
+      ]
+    });
+  }
+
   return (
     <aside className="admin-rail sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-border px-4 py-6">
       <Link href="/admin" className="flex items-center gap-2.5 px-2">
@@ -109,13 +164,13 @@ export function AdminNav({ adminName }: { adminName: string }) {
         <span className="leading-tight">
           <span className="block font-display text-base text-ink-900">EnCertify</span>
           <span className="block text-[10px] uppercase tracking-[0.18em] text-ink-400">
-            Admin
+            {isSuperAdmin ? "Super Admin" : "Admin"}
           </span>
         </span>
       </Link>
 
-      <nav className="mt-8 flex flex-1 flex-col gap-6">
-        {GROUPS.map((group, i) => (
+      <nav className="mt-8 flex flex-1 flex-col gap-6 overflow-y-auto">
+        {groups.map((group, i) => (
           <div key={group.label ?? `group-${i}`}>
             {group.label && (
               <p className="mb-1.5 px-3 text-[10px] font-medium uppercase tracking-[0.16em] text-ink-400">
@@ -135,14 +190,28 @@ export function AdminNav({ adminName }: { adminName: string }) {
                     href={link.href}
                     aria-current={active ? "page" : undefined}
                     className={clsx(
-                      "flex items-center gap-2.5 rounded px-3 py-2 text-sm transition-colors",
+                      "flex items-center justify-between rounded px-3 py-2 text-sm transition-colors",
                       active
                         ? "bg-ink-900 text-paper"
                         : "text-ink-700 hover:bg-ink-900/[0.06] hover:text-ink-900"
                     )}
                   >
-                    <span className={active ? "text-paper" : "text-ink-400"}>{link.icon}</span>
-                    {link.label}
+                    <div className="flex items-center gap-2.5">
+                      <span className={active ? "text-paper" : "text-ink-400"}>{link.icon}</span>
+                      <span>{link.label}</span>
+                    </div>
+                    {typeof link.badge === "number" && link.badge > 0 && (
+                      <span
+                        className={clsx(
+                          "ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                          active
+                            ? "bg-paper text-ink-900"
+                            : "bg-seal/10 text-seal-dark"
+                        )}
+                      >
+                        {link.badge}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
@@ -158,7 +227,9 @@ export function AdminNav({ adminName }: { adminName: string }) {
           </span>
           <span className="min-w-0">
             <span className="block truncate text-xs font-medium text-ink-900">{adminName}</span>
-            <span className="block text-[10px] text-ink-400">Signed in</span>
+            <span className="block text-[10px] text-ink-400">
+              {isSuperAdmin ? "Super Admin" : "Signed in"}
+            </span>
           </span>
         </div>
         <Button

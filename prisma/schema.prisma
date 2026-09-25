@@ -18,7 +18,20 @@ datasource db {
 }
 
 enum AdminRole {
+  SUPER_ADMIN
   ADMIN
+}
+
+enum AdminStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum AdminAccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum TemplateFileType {
@@ -38,16 +51,72 @@ enum BatchStatus {
 }
 
 model Admin {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String      @id @default(cuid())
+  email        String      @unique
   passwordHash String
   name         String
-  role         AdminRole @default(ADMIN)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  role         AdminRole   @default(ADMIN)
+  status       AdminStatus @default(ACTIVE)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
-  events    Event[]
-  templates Template[]
+  events           Event[]
+  templates        Template[]
+  activationTokens AdminActivationToken[]
+  reviewedRequests AdminAccessRequest[]   @relation("ReviewedRequests")
+  actorAuditLogs   AdminAuditLog[]        @relation("AuditActor")
+  targetAuditLogs  AdminAuditLog[]        @relation("AuditTarget")
+}
+
+model AdminAccessRequest {
+  id              String                   @id @default(cuid())
+  fullName        String
+  email           String
+  department      String?
+  organization    String?
+  reason          String
+  status          AdminAccessRequestStatus @default(PENDING)
+
+  reviewedById    String?
+  reviewedBy      Admin?                   @relation("ReviewedRequests", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  @@index([status])
+  @@index([email])
+  @@index([createdAt])
+}
+
+model AdminActivationToken {
+  id        String    @id @default(cuid())
+  adminId   String
+  admin     Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([adminId])
+  @@index([expiresAt])
+}
+
+model AdminAuditLog {
+  id            String   @id @default(cuid())
+  actorAdminId  String?
+  actorAdmin    Admin?   @relation("AuditActor", fields: [actorAdminId], references: [id], onDelete: SetNull)
+  action        String
+  targetAdminId String?
+  targetAdmin   Admin?   @relation("AuditTarget", fields: [targetAdminId], references: [id], onDelete: SetNull)
+  requestId     String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([actorAdminId])
+  @@index([targetAdminId])
+  @@index([createdAt])
 }
 
 model Event {

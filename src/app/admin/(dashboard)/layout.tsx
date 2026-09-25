@@ -17,7 +17,7 @@ export default async function AdminDashboardLayout({
 
   return (
     <div className="admin-bg flex min-h-screen">
-      <AdminNav adminName={admin.name} />
+      <AdminNav adminName={admin.name} adminRole={admin.role} />
       <div className="relative flex-1 overflow-hidden">
         <div aria-hidden="true" className="admin-dots pointer-events-none absolute inset-0" />
         <main className="relative mx-auto max-w-6xl px-8 py-10">{children}</main>

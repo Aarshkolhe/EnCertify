@@ -31,26 +31,76 @@ export async function POST(req: NextRequest) {
 
     if (isDbAuthDisabled()) {
       admin = verifyLocalAdmin(email, password);
+      if (!admin) {
+        return errorResponse("Invalid email or password.", 401);
+      }
     } else {
+      const normalizedEmail = email.toLowerCase();
       const found = await prisma.admin.findUnique({
-        where: { email: email.toLowerCase() }
+        where: { email: normalizedEmail }
       });
-      // Always run the compare, even on a missing user, to avoid timing-based
-      // account enumeration.
-      const passwordHash =
-        found?.passwordHash ?? "$2a$12$invalidinvalidinvalidinvalidinvalidin";
-      const passwordOk = await verifyPassword(password, passwordHash);
-      admin = found && passwordOk ? found : null;
-    }
 
-    if (!admin) {
-      return errorResponse("Invalid email or password.", 401);
+      if (found) {
+        if (found.status === "INVITED") {
+          return errorResponse(
+            "Your account has been approved. Please complete account activation using your activation link.",
+            403
+          );
+        }
+
+        const passwordOk = await verifyPassword(password, found.passwordHash);
+        if (!passwordOk) {
+          return errorResponse("Invalid email or password.", 401);
+        }
+
+        if (found.status === "SUSPENDED") {
+          return errorResponse(
+            "Your account has been suspended. Please contact a Super Admin.",
+            403
+          );
+        }
+
+        if (found.status !== "ACTIVE") {
+          return errorResponse("Invalid email or password.", 401);
+        }
+
+        admin = found;
+      } else {
+        // No Admin row found. Check for an access request for this email.
+        const accessReq = await prisma.adminAccessRequest.findFirst({
+          where: { email: normalizedEmail },
+          orderBy: { createdAt: "desc" }
+        });
+
+        if (accessReq?.status === "PENDING") {
+          return errorResponse("Your admin access request is still pending approval.", 403);
+        }
+
+        if (accessReq?.status === "REJECTED") {
+          return errorResponse(
+            accessReq.rejectionReason
+              ? `Your admin access request was rejected: ${accessReq.rejectionReason}`
+              : "Your admin access request was rejected by an administrator.",
+            403
+          );
+        }
+
+        // Always run dummy compare to mitigate timing-based enumeration
+        await verifyPassword(password, "$2a$12$invalidinvalidinvalidinvalidinvalidin");
+        return errorResponse("Invalid email or password.", 401);
+      }
     }
 
     const token = await signAdminSession({ sub: admin.id, email: admin.email });
 
     const response = NextResponse.json({
-      admin: { id: admin.id, email: admin.email, name: admin.name }
+      admin: {
+        id: admin.id,
+        email: admin.email,
+        name: admin.name,
+        role: admin.role,
+        status: admin.status
+      }
     });
     response.cookies.set(SESSION_COOKIE, token, SESSION_COOKIE_OPTIONS);
     return response;

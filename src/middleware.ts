@@ -6,7 +6,9 @@ const SESSION_COOKIE = "cert_admin_session";
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  if (pathname === "/admin/login") {
+  const PUBLIC_ADMIN_PATHS = ["/admin/login", "/admin/request-access", "/admin/activate"];
+
+  if (PUBLIC_ADMIN_PATHS.includes(pathname)) {
     return NextResponse.next();
   }
 

@@ -11,7 +11,7 @@ export async function requireAdmin(): Promise<
   { admin: Admin; error: null } | { admin: null; error: NextResponse }
 > {
   const admin = await getSessionAdmin();
-  if (!admin) {
+  if (!admin || admin.status !== "ACTIVE") {
     return {
       admin: null,
       error: NextResponse.json(
@@ -21,6 +21,27 @@ export async function requireAdmin(): Promise<
     };
   }
   return { admin, error: null };
+}
+
+/**
+ * Super Admin API routes must call this. Enforces server-side that the
+ * authenticated admin possesses the SUPER_ADMIN role.
+ */
+export async function requireSuperAdmin(): Promise<
+  { admin: Admin; error: null } | { admin: null; error: NextResponse }
+> {
+  const auth = await requireAdmin();
+  if (auth.error) return auth;
+  if (auth.admin.role !== "SUPER_ADMIN") {
+    return {
+      admin: null,
+      error: NextResponse.json(
+        { error: "Forbidden. Super Admin privileges required." },
+        { status: 403 }
+      )
+    };
+  }
+  return { admin: auth.admin, error: null };
 }
 
 /** Consistent, safe error envelope — never leak stack traces or internals. */
