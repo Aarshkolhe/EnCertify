@@ -26,7 +26,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const summary = await runGenerationBatch(parsed.data);
+    const origin = req.nextUrl.origin;
+    const summary = await runGenerationBatch({
+      ...parsed.data,
+      baseUrl: origin
+    });
     return NextResponse.json({ summary });
   } catch (err) {
     return errorResponse(

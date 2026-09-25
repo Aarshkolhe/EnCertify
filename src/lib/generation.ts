@@ -21,6 +21,7 @@ import { createZipArchive, safeArcFilename, type ZipFileEntry } from "@/lib/zip"
 import { formatCertificateDate } from "@/lib/dates";
 import type { FieldConfig } from "@/lib/fieldTypes";
 import { MAX_CERTIFICATES_PER_BATCH, getMaxZipSizeBytes } from "@/lib/constants";
+import { resolveAppBaseUrl } from "@/lib/url";
 
 export interface GenerationSummary {
   batchId: string;
@@ -71,6 +72,7 @@ export interface RunGenerationBatchParams {
   uploadId?: string;
   mapping?: ColumnMapping;
   participants?: ParticipantRecord[];
+  baseUrl?: string;
 }
 
 export async function runGenerationBatch(
@@ -78,6 +80,13 @@ export async function runGenerationBatch(
   concurrency = DEFAULT_GENERATION_CONCURRENCY
 ): Promise<GenerationSummary> {
   const totalStart = performance.now();
+
+  const appUrl = resolveAppBaseUrl(params.baseUrl);
+  const isProduction =
+    process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+  if (isProduction && /localhost|127\.0\.0\.1/i.test(appUrl)) {
+    throw new Error("Production application URL is not configured correctly.");
+  }
 
   const event = await prisma.event.findUnique({ where: { id: params.eventId } });
   if (!event) throw new Error("Event not found.");
@@ -171,7 +180,6 @@ export async function runGenerationBatch(
     const idDuration = performance.now() - idStart;
 
     const fields = activeTemplate.fields as unknown as FieldConfig[];
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
     // --------------------------------------------------------------------------
     // Phase 4: Bounded Concurrent Rendering & Upload (No PDF buffer retention)
